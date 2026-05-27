@@ -251,6 +251,11 @@ export default function Listings() {
   const deleteMutation = trpc.listings.delete.useMutation();
   const updateNotesMutation = trpc.listings.updateNotes.useMutation();
   const addRatingMutation = trpc.listings.addRating.useMutation();
+  const geocodeMissingMutation = trpc.listings.geocodeMissing.useMutation();
+  const updateFieldMutation = trpc.listings.updateField.useMutation();
+  const [isGeocodingMissing, setIsGeocodingMissing] = useState(false);
+  const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
+  const [editingValue, setEditingValue] = useState("");
 
   // Derived: unique filter values
   const uniqueWoj = useMemo(
@@ -522,6 +527,75 @@ export default function Listings() {
     }
   }
 
+  async function handleGeocodeMissing() {
+    setIsGeocodingMissing(true);
+    try {
+      const result = await geocodeMissingMutation.mutateAsync();
+      await refetch();
+      toast.success(`Geokodowanie zakończone`, {
+        description: `✓ ${result.success} zlokalizowanych, ${result.failed} bez danych lokalizacji (razem: ${result.total})`,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Nieznany błąd";
+      toast.error("Błąd geokodowania", { description: msg });
+    } finally {
+      setIsGeocodingMissing(false);
+    }
+  }
+
+  type EditableField = "wojewodztwo" | "powiat" | "gmina" | "miejscowosc" | "rozmiarDzialki" | "media" | "przeznaczenie" | "zabudowania" | "cena";
+  const EDITABLE_FIELDS: EditableField[] = ["wojewodztwo", "powiat", "gmina", "miejscowosc", "rozmiarDzialki", "media", "przeznaczenie", "zabudowania", "cena"];
+
+  function startEdit(id: number, field: string, currentValue: string) {
+    setEditingCell({ id, field });
+    setEditingValue(currentValue ?? "");
+  }
+
+  async function commitEdit() {
+    if (!editingCell) return;
+    try {
+      await updateFieldMutation.mutateAsync({
+        id: editingCell.id,
+        field: editingCell.field as EditableField,
+        value: editingValue.trim(),
+      });
+      await refetch();
+      setEditingCell(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Nieznany błąd";
+      toast.error("Błąd zapisu", { description: msg });
+    }
+  }
+
+  function cancelEdit() { setEditingCell(null); }
+
+  function InlineCell({ id, field, value }: { id: number; field: string; value: string }) {
+    const isEditing = editingCell?.id === id && editingCell?.field === field;
+    const isEditable = EDITABLE_FIELDS.includes(field as EditableField);
+    if (!isEditable) return <span>{value}</span>;
+    if (isEditing) {
+      return (
+        <input
+          autoFocus
+          className="w-full text-xs border border-blue-400 rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+          value={editingValue}
+          onChange={e => setEditingValue(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commitEdit(); } if (e.key === "Escape") cancelEdit(); }}
+          onClick={e => e.stopPropagation()}
+          style={{ minWidth: "60px", maxWidth: "100%" }}
+        />
+      );
+    }
+    return (
+      <span
+        className="cursor-text hover:bg-blue-50 hover:text-blue-700 rounded px-0.5 transition-colors"
+        title="Kliknij dwukrotnie aby edytować"
+        onDoubleClick={e => { e.stopPropagation(); startEdit(id, field, value); }}
+      >{value || <span className="text-slate-300 italic text-[10px]">—</span>}</span>
+    );
+  }
+
   async function handleDelete(id: number) {
     if (!confirm(`Usunąć ofertę #${id}?`)) return;
     try {
@@ -598,6 +672,19 @@ export default function Listings() {
           <div>
             <h1 className="text-xl font-bold text-slate-800">Tracker Ofert Nieruchomości</h1>
             <p className="text-xs text-slate-500">{allListings.length} ofert w bazie</p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5 text-slate-600 border-slate-300 hover:bg-slate-100"
+              onClick={handleGeocodeMissing}
+              disabled={isGeocodingMissing}
+              title="Geokoduj oferty bez współrzędnych (dodaj piny na mapę)"
+            >
+              {isGeocodingMissing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MapPin className="w-3.5 h-3.5" />}
+              {isGeocodingMissing ? "Geokodowanie..." : "Geokoduj brakujące"}
+            </Button>
           </div>
         </div>
 
@@ -879,26 +966,38 @@ export default function Listings() {
                               </a>
                             </td>
 
-                            {/* Województwo */}
-                            <td className="px-2 py-2 text-slate-700 truncate" title={listing.wojewodztwo}>{listing.wojewodztwo}</td>
+                            {/* Województwo — double-click to edit */}
+                            <td className="px-2 py-2 text-slate-700 truncate" title={listing.wojewodztwo}>
+                              <InlineCell id={listing.id} field="wojewodztwo" value={listing.wojewodztwo} />
+                            </td>
                             {/* Powiat */}
-                            <td className="px-2 py-2 text-slate-600 truncate" title={listing.powiat}>{listing.powiat}</td>
+                            <td className="px-2 py-2 text-slate-600 truncate" title={listing.powiat}>
+                              <InlineCell id={listing.id} field="powiat" value={listing.powiat} />
+                            </td>
                             {/* Gmina */}
-                            <td className="px-2 py-2 text-slate-600 truncate" title={listing.gmina}>{listing.gmina}</td>
+                            <td className="px-2 py-2 text-slate-600 truncate" title={listing.gmina}>
+                              <InlineCell id={listing.id} field="gmina" value={listing.gmina} />
+                            </td>
                             {/* Miejscowość */}
-                            <td className="px-2 py-2 font-medium text-slate-800 truncate" title={listing.miejscowosc}>{listing.miejscowosc}</td>
+                            <td className="px-2 py-2 font-medium text-slate-800 truncate" title={listing.miejscowosc}>
+                              <InlineCell id={listing.id} field="miejscowosc" value={listing.miejscowosc} />
+                            </td>
                             {/* Rozmiar działki */}
-                            <td className="px-2 py-2 text-slate-600 whitespace-nowrap">{listing.rozmiarDzialki}</td>
+                            <td className="px-2 py-2 text-slate-600 whitespace-nowrap">
+                              <InlineCell id={listing.id} field="rozmiarDzialki" value={listing.rozmiarDzialki} />
+                            </td>
                             {/* Media — wraps */}
-                            <td className="px-2 py-2 text-slate-600" style={{ whiteSpace: "normal", lineHeight: "1.4" }}>{listing.media}</td>
+                            <td className="px-2 py-2 text-slate-600" style={{ whiteSpace: "normal", lineHeight: "1.4" }}>
+                              <InlineCell id={listing.id} field="media" value={listing.media} />
+                            </td>
                             {/* Przeznaczenie */}
                             <td className="px-2 py-2">
-                              {listing.przeznaczenie !== "-" ? (
-                                <Badge variant="outline" className="text-[10px] font-normal whitespace-normal text-left h-auto">{listing.przeznaczenie}</Badge>
-                              ) : "-"}
+                              <InlineCell id={listing.id} field="przeznaczenie" value={listing.przeznaczenie} />
                             </td>
                             {/* Zabudowania — wraps */}
-                            <td className="px-2 py-2 text-slate-600" style={{ whiteSpace: "normal", lineHeight: "1.4" }}>{listing.zabudowania}</td>
+                            <td className="px-2 py-2 text-slate-600" style={{ whiteSpace: "normal", lineHeight: "1.4" }}>
+                              <InlineCell id={listing.id} field="zabudowania" value={listing.zabudowania} />
+                            </td>
 
                             {/* Notes — editable */}
                             <td className="px-2 py-2" style={{ whiteSpace: "normal" }}>
@@ -910,9 +1009,11 @@ export default function Listings() {
                               <StarRating listingId={listing.id} stats={ratingStats[listing.id]} onRate={handleRate} />
                             </td>
 
-                            {/* Cena — sticky right */}
+                            {/* Cena — sticky right, double-click to edit */}
                             <td className="px-2 py-2 whitespace-nowrap" style={{ position: "sticky", right: 36, zIndex: 5, background: stickyBg, boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)" }}>
-                              <span className="font-bold text-sm" style={{ color: priceColor }}>{listing.cena}</span>
+                              <span className="font-bold text-sm" style={{ color: priceColor }}>
+                                <InlineCell id={listing.id} field="cena" value={listing.cena} />
+                              </span>
                             </td>
 
                             {/* Actions — sticky right:0 */}
