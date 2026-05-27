@@ -120,20 +120,22 @@ const COLUMNS: {
   label: string;
   sortable?: boolean;
   minW?: string;
+  maxW?: string;
+  wrap?: boolean;
   sticky?: "left" | "right";
   stickyOffset?: number;
 }[] = [
-  { key: "id",            label: "ID",              sortable: true,  minW: "52px",  sticky: "left",  stickyOffset: 0 },
-  { key: "url",           label: "URL",                              minW: "72px" },
-  { key: "wojewodztwo",   label: "Województwo",     sortable: true,  minW: "130px" },
-  { key: "powiat",        label: "Powiat",           sortable: true,  minW: "110px" },
-  { key: "gmina",         label: "Gmina",            sortable: true,  minW: "110px" },
-  { key: "miejscowosc",   label: "Miejscowość",      sortable: true,  minW: "120px" },
-  { key: "rozmiarDzialki",label: "Rozmiar działki",  sortable: true,  minW: "130px" },
-  { key: "media",         label: "Media",                            minW: "130px" },
-  { key: "przeznaczenie", label: "Przeznaczenie",    sortable: true,  minW: "130px" },
-  { key: "zabudowania",   label: "Zabudowania",                      minW: "140px" },
-  { key: "cena",          label: "Cena",             sortable: true,  minW: "110px", sticky: "right", stickyOffset: 40 },
+  { key: "id",            label: "ID",              sortable: true,  minW: "44px",  maxW: "52px",  sticky: "left",  stickyOffset: 0 },
+  { key: "url",           label: "URL",                              minW: "52px",  maxW: "60px" },
+  { key: "wojewodztwo",   label: "Województwo",     sortable: true,  minW: "110px", maxW: "150px" },
+  { key: "powiat",        label: "Powiat",           sortable: true,  minW: "100px", maxW: "140px" },
+  { key: "gmina",         label: "Gmina",            sortable: true,  minW: "100px", maxW: "140px" },
+  { key: "miejscowosc",   label: "Miejscowość",      sortable: true,  minW: "100px", maxW: "150px" },
+  { key: "rozmiarDzialki",label: "Rozmiar działki",  sortable: true,  minW: "100px", maxW: "130px" },
+  { key: "media",         label: "Media",                            minW: "140px", maxW: "220px", wrap: true },
+  { key: "przeznaczenie", label: "Przeznaczenie",    sortable: true,  minW: "100px", maxW: "160px" },
+  { key: "zabudowania",   label: "Zabudowania",                      minW: "160px", maxW: "260px", wrap: true },
+  { key: "cena",          label: "Cena",             sortable: true,  minW: "90px",  maxW: "120px", sticky: "right", stickyOffset: 36 },
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -589,7 +591,21 @@ export default function Listings() {
           <CardContent className="p-0">
             {/* Outer div captures click-outside via ref */}
             <div ref={tableContainerRef} className="overflow-x-auto relative">
-              <table className="w-full text-xs border-collapse" style={{ minWidth: "1100px" }}>
+              <table className="w-full text-xs border-collapse" style={{ minWidth: "1100px", tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: "44px" }} />{/* ID */}
+                  <col style={{ width: "48px" }} />{/* URL */}
+                  <col style={{ width: "130px" }} />{/* Województwo */}
+                  <col style={{ width: "110px" }} />{/* Powiat */}
+                  <col style={{ width: "110px" }} />{/* Gmina */}
+                  <col style={{ width: "110px" }} />{/* Miejscowość */}
+                  <col style={{ width: "100px" }} />{/* Rozmiar działki */}
+                  <col style={{ width: "180px" }} />{/* Media */}
+                  <col style={{ width: "130px" }} />{/* Przeznaczenie */}
+                  <col style={{ width: "200px" }} />{/* Zabudowania */}
+                  <col style={{ width: "100px" }} />{/* Cena */}
+                  <col style={{ width: "36px" }} />{/* Akcje */}
+                </colgroup>
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
                     {COLUMNS.map(col => {
@@ -609,7 +625,7 @@ export default function Listings() {
                         <th
                           key={col.key}
                           className="text-left font-semibold text-slate-600 whitespace-nowrap px-3 py-2"
-                          style={{ minWidth: col.minW, ...stickyStyle }}
+                          style={{ minWidth: col.minW, maxWidth: col.maxW, width: col.maxW, ...stickyStyle }}
                         >
                           {col.sortable ? (
                             <button
@@ -625,17 +641,18 @@ export default function Listings() {
                     })}
                     {/* Actions column — sticky right at 0 */}
                     <th
-                      className="text-left font-semibold text-slate-600 px-3 py-2 w-10"
+                      className="text-left font-semibold text-slate-600 px-3 py-2"
                       style={{
                         position: "sticky",
                         right: 0,
                         zIndex: 10,
                         background: "#f8fafc",
                         boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
-                        minWidth: "40px",
+                        width: "36px",
+                        minWidth: "36px",
+                        maxWidth: "36px",
                       }}
                     >
-                      Akcje
                     </th>
                   </tr>
                 </thead>
@@ -723,29 +740,25 @@ export default function Listings() {
                           </td>
 
                           {/* Województwo */}
-                          <td className="px-3 py-2 text-slate-700 whitespace-nowrap">{listing.wojewodztwo}</td>
+                          <td className="px-3 py-2 text-slate-700" style={{ maxWidth: "150px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.wojewodztwo}>{listing.wojewodztwo}</td>
                           {/* Powiat */}
-                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{listing.powiat}</td>
+                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "140px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.powiat}>{listing.powiat}</td>
                           {/* Gmina */}
-                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{listing.gmina}</td>
+                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "140px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.gmina}>{listing.gmina}</td>
                           {/* Miejscowość */}
-                          <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{listing.miejscowosc}</td>
+                          <td className="px-3 py-2 font-medium text-slate-800" style={{ maxWidth: "150px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.miejscowosc}>{listing.miejscowosc}</td>
                           {/* Rozmiar działki */}
-                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{listing.rozmiarDzialki}</td>
-                          {/* Media */}
-                          <td className="px-3 py-2 text-slate-600 max-w-[150px]">
-                            <span className="truncate block" title={listing.media}>{listing.media}</span>
-                          </td>
+                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap" style={{ maxWidth: "130px" }}>{listing.rozmiarDzialki}</td>
+                          {/* Media — wraps */}
+                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "220px", minWidth: "140px", whiteSpace: "normal", lineHeight: "1.4" }}>{listing.media}</td>
                           {/* Przeznaczenie */}
-                          <td className="px-3 py-2 whitespace-nowrap">
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ maxWidth: "160px" }}>
                             {listing.przeznaczenie !== "-" ? (
                               <Badge variant="outline" className="text-xs font-normal">{listing.przeznaczenie}</Badge>
                             ) : "-"}
                           </td>
-                          {/* Zabudowania */}
-                          <td className="px-3 py-2 text-slate-600 max-w-[150px]">
-                            <span className="truncate block" title={listing.zabudowania}>{listing.zabudowania}</span>
-                          </td>
+                          {/* Zabudowania — wraps */}
+                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "260px", minWidth: "160px", whiteSpace: "normal", lineHeight: "1.4" }}>{listing.zabudowania}</td>
 
                           {/* Cena — sticky right */}
                           <td
@@ -765,13 +778,16 @@ export default function Listings() {
 
                           {/* Actions — sticky right at 0 */}
                           <td
-                            className="px-3 py-2"
+                            className="px-1 py-2"
                             style={{
                               position: "sticky",
                               right: 0,
                               zIndex: 5,
                               background: stickyBg,
                               boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                              width: "36px",
+                              minWidth: "36px",
+                              maxWidth: "36px",
                             }}
                           >
                             <button
