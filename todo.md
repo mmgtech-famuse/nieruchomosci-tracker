@@ -35,3 +35,8 @@
 - [x] Price parsing handles Polish format: '375 000 zł'
 - [x] Map script deduplication (prevent double-load)
 - [x] Schema uses VARCHAR for all columns (TiDB TEXT default limitation)
+
+## Przeznaczenie Normalization
+- [x] Normalize all existing przeznaczenie values in DB to fixed categories
+- [x] Update AI extraction prompt to always return one of the fixed categories
+- [x] Update filter dropdown to show fixed categories (ordered, only present categories shown)

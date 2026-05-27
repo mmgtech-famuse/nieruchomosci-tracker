@@ -180,8 +180,20 @@ export default function Listings() {
     () => Array.from(new Set(allListings.map(l => l.wojewodztwo).filter(v => v && v !== "-"))).sort((a, b) => a.localeCompare(b, "pl")),
     [allListings]
   );
+  // Fixed przeznaczenie categories — always shown in this order
+  const PRZEZNACZENIE_CATEGORIES = [
+    'budowlana',
+    'rekreacyjna/letniskowa',
+    'mieszkaniowa',
+    'siedliskowa',
+    'rolna',
+    'rolno-budowlana',
+    'mieszana/inne',
+    'brak danych',
+  ];
+  // Only show categories that actually exist in current data
   const uniquePrz = useMemo(
-    () => Array.from(new Set(allListings.map(l => l.przeznaczenie).filter(v => v && v !== "-"))).sort((a, b) => a.localeCompare(b, "pl")),
+    () => PRZEZNACZENIE_CATEGORIES.filter(cat => allListings.some(l => l.przeznaczenie === cat)),
     [allListings]
   );
 

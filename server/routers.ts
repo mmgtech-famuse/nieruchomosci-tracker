@@ -89,14 +89,15 @@ Zwróć TYLKO poprawny obiekt JSON z tymi polami:
   "miejscowosc": "nazwa miejscowości lub '-'",
   "rozmiarDzialki": "rozmiar działki z jednostką (np. '1500 m²', '0.5 ha') lub '-'",
   "media": "dostępne media oddzielone przecinkami (np. 'prąd, woda, gaz') lub '-'",
-  "przeznaczenie": "przeznaczenie działki (np. 'budowlana', 'rolna', 'leśna', 'rekreacyjna') lub '-'",
+  "przeznaczenie": "Wybierz DOKŁADNIE jedną z poniższych kategorii (bez modyfikacji):\n- budowlana\n- rekreacyjna/letniskowa\n- mieszkaniowa\n- siedliskowa\n- rolna\n- rolno-budowlana\n- mieszana/inne\n- brak danych\n\nZasady dopasowania:\n'budowlana' → działka z pozwoleniem/przeznaczeniem pod zabudowę mieszkaniową lub usługową\n'rekreacyjna/letniskowa' → rekreacyjna, letniskowa, wypoczynkowa, turystyczna\n'mieszkaniowa' → mieszkaniowa jednorodzinna (MN), mieszkaniowa wielorodzinna\n'siedliskowa' → siedliskowa, siedlisko, zagrodowa\n'rolna' → rolna, rolno-leśna, leśna, rolna z WZ\n'rolno-budowlana' → rolno-budowlana, rolna z możliwością zabudowy\n'mieszana/inne' → kilka przeznaczeń jednocześnie (np. budowlana/rekreacyjna), lub inne niepasujące\n'brak danych' → brak informacji w ogłoszeniu",
   "zabudowania": "opis zabudowań lub '-'",
   "cena": "cena w formacie '250 000 zł' lub '-' jeśli brak"
 }`
           : `Przeanalizuj URL ogłoszenia nieruchomości i wyciągnij co możesz z samego linku.
 URL: ${input.url}
 Zwróć obiekt JSON z polami: wojewodztwo, powiat, gmina, miejscowosc, rozmiarDzialki, media, przeznaczenie, zabudowania, cena.
-Użyj '-' dla pól których nie możesz określić z URL.`;
+Dla pola przeznaczenie użyj TYLKO jednej z kategorii: budowlana, rekreacyjna/letniskowa, mieszkaniowa, siedliskowa, rolna, rolno-budowlana, mieszana/inne, brak danych.
+Dla pozostałych pól użyj '-' jeśli nie możesz określić.`;
 
         let extracted: Record<string, string> = {};
         try {
@@ -181,6 +182,32 @@ Użyj '-' dla pól których nie możesz określić z URL.`;
           }
         }
 
+        // ── Step 3b: Normalize przeznaczenie to fixed categories ──────────────────
+        const FIXED_CATS = ['budowlana','rekreacyjna/letniskowa','mieszkaniowa','siedliskowa','rolna','rolno-budowlana','mieszana/inne','brak danych'];
+        const rawP = (extracted.przeznaczenie || '').toLowerCase().trim();
+        let normP: string;
+        if (FIXED_CATS.includes(rawP)) {
+          normP = rawP;
+        } else if (!rawP || rawP === '-') {
+          normP = 'brak danych';
+        } else if (rawP.includes('rolno-budowlana') || (rawP.includes('rolna') && rawP.includes('budow'))) {
+          normP = 'rolno-budowlana';
+        } else if ((rawP.includes('budowlana') && rawP.includes('rekre')) || (rawP.includes('budowlana') && rawP.includes('mieszk'))) {
+          normP = 'mieszana/inne';
+        } else if (rawP.includes('budowlana')) {
+          normP = 'budowlana';
+        } else if (rawP.includes('rekre') || rawP.includes('letnisk') || rawP.includes('wypocz') || rawP.includes('turyst')) {
+          normP = 'rekreacyjna/letniskowa';
+        } else if (rawP.includes('mieszk')) {
+          normP = 'mieszkaniowa';
+        } else if (rawP.includes('siedlisk') || rawP.includes('zagroda')) {
+          normP = 'siedliskowa';
+        } else if (rawP.includes('rolna') || rawP.includes('rolno') || rawP.includes('leśna')) {
+          normP = 'rolna';
+        } else {
+          normP = 'mieszana/inne';
+        }
+
         // ── Step 4: Save to DB ──────────────────────────────────────────────
         const newListing = await insertListing({
           url: input.url,
@@ -190,7 +217,7 @@ Użyj '-' dla pól których nie możesz określić z URL.`;
           miejscowosc: extracted.miejscowosc || "-",
           rozmiarDzialki: extracted.rozmiarDzialki || "-",
           media: extracted.media || "-",
-          przeznaczenie: extracted.przeznaczenie || "-",
+          przeznaczenie: normP,
           zabudowania: extracted.zabudowania || "-",
           cena: extracted.cena || "-",
           latitude: latitude ?? undefined,
