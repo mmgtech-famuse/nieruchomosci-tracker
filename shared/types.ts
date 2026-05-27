@@ -1,7 +1,19 @@
-/**
- * Unified type exports
- * Import shared types from this single entry point.
- */
+// Shared types used by both client and server
 
-export type * from "../drizzle/schema";
-export * from "./_core/errors";
+export interface Listing {
+  id: number;
+  url: string;
+  wojewodztwo: string;
+  powiat: string;
+  gmina: string;
+  miejscowosc: string;
+  rozmiarDzialki: string;
+  media: string;
+  przeznaczenie: string;
+  zabudowania: string;
+  cena: string;
+  latitude: string | null;
+  longitude: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}

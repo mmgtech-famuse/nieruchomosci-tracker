@@ -1,19 +1,9 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { decimal, index, int, mysqlEnum, mysqlTable, timestamp, varchar } from "drizzle-orm/mysql-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
-  name: text("name"),
+  name: varchar("name", { length: 256 }),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
@@ -25,4 +15,30 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+export const listings = mysqlTable(
+  "listings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    url: varchar("url", { length: 2048 }).notNull(),
+    wojewodztwo: varchar("wojewodztwo", { length: 64 }).notNull().default("-"),
+    powiat: varchar("powiat", { length: 64 }).notNull().default("-"),
+    gmina: varchar("gmina", { length: 64 }).notNull().default("-"),
+    miejscowosc: varchar("miejscowosc", { length: 128 }).notNull().default("-"),
+    rozmiarDzialki: varchar("rozmiarDzialki", { length: 128 }).notNull().default("-"),
+    media: varchar("media", { length: 512 }).notNull().default("-"),
+    przeznaczenie: varchar("przeznaczenie", { length: 256 }).notNull().default("-"),
+    zabudowania: varchar("zabudowania", { length: 512 }).notNull().default("-"),
+    cena: varchar("cena", { length: 128 }).notNull().default("-"),
+    latitude: decimal("latitude", { precision: 10, scale: 7 }),
+    longitude: decimal("longitude", { precision: 11, scale: 7 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    wojewodztwoIdx: index("wojewodztwoIdx").on(table.wojewodztwo),
+    przeznaczeniIdx: index("przeznaczeniIdx").on(table.przeznaczenie),
+  })
+);
+
+export type Listing = typeof listings.$inferSelect;
+export type InsertListing = typeof listings.$inferInsert;
