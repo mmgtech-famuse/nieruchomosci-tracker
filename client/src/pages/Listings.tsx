@@ -168,9 +168,11 @@ export default function Listings() {
 
   // Table refs
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
-  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null); // click-outside wrapper (whole Card)
+  const tableScrollRef = useRef<HTMLDivElement>(null);    // overflow-x-auto scroll container
   const mirrorScrollRef = useRef<HTMLDivElement>(null);
   const mirrorInnerRef = useRef<HTMLDivElement>(null);
+  const [showScrollbar, setShowScrollbar] = useState(false); // fixed scrollbar visibility
 
   // Data
   const { data: allListings = [], isLoading, refetch } = trpc.listings.getAll.useQuery();
@@ -200,20 +202,49 @@ export default function Listings() {
     [allListings]
   );
 
+  // Synonym map for search — maps user input to related terms
+  const SYNONYMS: Record<string, string[]> = {
+    'budowlana': ['budowlana', 'budowl', 'mieszkaniowa', 'mn', 'usługowa', 'przemysłowa'],
+    'budowlane': ['budowlana', 'budowl'],
+    'rolna': ['rolna', 'rolno', 'rolnicza', 'rolne'],
+    'rolne': ['rolna', 'rolno'],
+    'siedliskowa': ['siedlisk', 'zagroda'],
+    'siedliskowe': ['siedlisk'],
+    'leśna': ['leśna', 'lesna', 'las'],
+    'lesna': ['leśna', 'lesna'],
+    'leśne': ['leśna', 'lesna'],
+    'rekreacyjna': ['rekre', 'letnisk', 'wypocz', 'turyst'],
+    'rekreacyjne': ['rekre', 'letnisk'],
+    'letniskowa': ['letnisk', 'rekre'],
+    'wz': ['wz', 'warunki zabudowy'],
+    'warunki': ['wz', 'warunki'],
+    'prąd': ['prąd', 'energia', 'elektryczność', 'energetyczny'],
+    'woda': ['woda', 'wodociąg', 'wodociągowa', 'studnia'],
+    'gaz': ['gaz', 'gazowy', 'gazociąg'],
+    'kanalizacja': ['kanalizacja', 'szambo', 'szambem', 'szambowa'],
+    'dom': ['dom', 'budynek', 'zabudow'],
+    'stodoła': ['stodoła', 'stodołą', 'stodoły'],
+    'tani': ['do 300', '200 000', '150 000', '100 000'],
+    'tanie': ['do 300', '200 000'],
+    'drogi': ['400 000', '500 000', '600 000'],
+  };
+
   // Filtered + sorted listings
   const filtered = useMemo(() => {
     let items = allListings.filter(l => {
       if (filterWoj && l.wojewodztwo !== filterWoj) return false;
       if (filterPrz && !l.przeznaczenie?.toLowerCase().includes(filterPrz.toLowerCase())) return false;
       if (search) {
-        const q = search.toLowerCase();
-        return (
-          l.miejscowosc.toLowerCase().includes(q) ||
-          l.gmina.toLowerCase().includes(q) ||
-          l.powiat.toLowerCase().includes(q) ||
-          l.wojewodztwo.toLowerCase().includes(q) ||
-          String(l.id).includes(q)
-        );
+        const q = search.toLowerCase().trim();
+        // Expand query with synonyms
+        const terms = [q, ...(SYNONYMS[q] || [])];
+        // Build full-text search string from all relevant fields
+        const haystack = [
+          l.miejscowosc, l.gmina, l.powiat, l.wojewodztwo,
+          l.przeznaczenie, l.media, l.zabudowania, l.rozmiarDzialki,
+          l.cena, String(l.id)
+        ].join(' ').toLowerCase();
+        return terms.some(term => haystack.includes(term));
       }
       return true;
     });
@@ -238,33 +269,59 @@ export default function Listings() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ── Mirror scrollbar sync ──────────────────────────────────────────────────────
+  // ── Mirror scrollbar sync (fixed position, always visible when table is in view) ──
   useEffect(() => {
-    const table = tableContainerRef.current;
+    const table = tableScrollRef.current;
     const mirror = mirrorScrollRef.current;
     const inner = mirrorInnerRef.current;
+    const wrapper = tableContainerRef.current;
     if (!table || !mirror || !inner) return;
 
     // Set inner width to match table scroll width
     const updateWidth = () => {
       inner.style.width = table.scrollWidth + 'px';
+      // Also match the mirror width and left offset to the table container
+      if (wrapper) {
+        const rect = wrapper.getBoundingClientRect();
+        mirror.style.width = rect.width + 'px';
+        mirror.style.left = rect.left + 'px';
+      }
     };
     updateWidth();
 
     // Sync: table → mirror
-    const onTableScroll = () => { mirror.scrollLeft = table.scrollLeft; };
+    let syncingFromTable = false;
+    let syncingFromMirror = false;
+    const onTableScroll = () => {
+      if (syncingFromMirror) return;
+      syncingFromTable = true;
+      mirror.scrollLeft = table.scrollLeft;
+      syncingFromTable = false;
+    };
     // Sync: mirror → table
-    const onMirrorScroll = () => { table.scrollLeft = mirror.scrollLeft; };
+    const onMirrorScroll = () => {
+      if (syncingFromTable) return;
+      syncingFromMirror = true;
+      table.scrollLeft = mirror.scrollLeft;
+      syncingFromMirror = false;
+    };
 
     table.addEventListener('scroll', onTableScroll);
     mirror.addEventListener('scroll', onMirrorScroll);
-
-    // Update width on window resize
     window.addEventListener('resize', updateWidth);
+
+    // IntersectionObserver: show fixed scrollbar only when table is visible
+    const observer = new IntersectionObserver(
+      ([entry]) => { setShowScrollbar(entry.isIntersecting); },
+      { threshold: 0.01 }
+    );
+    if (wrapper) observer.observe(wrapper);
+
     return () => {
       table.removeEventListener('scroll', onTableScroll);
       mirror.removeEventListener('scroll', onMirrorScroll);
       window.removeEventListener('resize', updateWidth);
+      observer.disconnect();
     };
   }, []);
 
@@ -558,7 +615,7 @@ export default function Listings() {
                   <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
                   <Input
                     className="h-8 pl-8 text-sm"
-                    placeholder="Miejscowość, gmina, ID..."
+                    placeholder="Miejscowość, gmina, media, przeznaczenie, ID..."
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                   />
@@ -622,6 +679,7 @@ export default function Listings() {
         </Card>
 
         {/* ── Table ── */}
+        <div ref={tableContainerRef}>
         <Card className="border border-slate-200 shadow-sm">
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
@@ -634,8 +692,8 @@ export default function Listings() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {/* Outer div captures click-outside via ref */}
-            <div ref={tableContainerRef} className="overflow-x-auto relative">
+            {/* Scroll container — tableScrollRef for mirror scrollbar sync */}
+            <div ref={tableScrollRef} className="overflow-x-auto relative">
               <table className="w-full text-xs border-collapse" style={{ minWidth: "1100px", tableLayout: "fixed" }}>
                 <colgroup>
                   <col style={{ width: "44px" }} />{/* ID */}
@@ -850,23 +908,27 @@ export default function Listings() {
                 </tbody>
               </table>
             </div>
-            {/* ── Sticky mirror scrollbar ── always visible at bottom of viewport ── */}
-            <div
-              ref={mirrorScrollRef}
-              className="overflow-x-auto"
-              style={{
-                position: 'sticky',
-                bottom: 0,
-                zIndex: 20,
-                background: 'white',
-                borderTop: '1px solid #e2e8f0',
-                height: '14px',
-              }}
-            >
-              <div ref={mirrorInnerRef} style={{ height: '1px' }} />
-            </div>
           </CardContent>
         </Card>
+        </div>{/* end tableContainerRef */}
+
+        {/* ── Fixed mirror scrollbar ── always visible at bottom of window when table is in view ── */}
+        <div
+          ref={mirrorScrollRef}
+          className="overflow-x-auto"
+          style={{
+            position: 'fixed',
+            bottom: 0,
+            zIndex: 9999,
+            background: 'white',
+            borderTop: '2px solid #cbd5e1',
+            height: '16px',
+            display: showScrollbar ? 'block' : 'none',
+            // width and left are set dynamically by useEffect
+          }}
+        >
+          <div ref={mirrorInnerRef} style={{ height: '1px' }} />
+        </div>
       </div>
     </div>
   );
