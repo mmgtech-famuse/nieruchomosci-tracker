@@ -190,18 +190,18 @@ Dla pozostałych pól użyj '-' jeśli nie możesz określić.`;
         const normalizePrzeznaczenie = (raw: string): string => {
           if (!raw || raw === '-') return 'inne/brak danych';
           const tags: string[] = [];
-          // Check for WZ (warunki zabudowy)
-          if (raw.includes('wz') || raw.includes('warunki zabudowy') || raw.includes('warunki') ) tags.push('WZ');
-          // Check for budowlana
-          if (raw.includes('budowlana') || raw.includes('budowl') || raw.includes('mieszkaniowa') || raw.includes('usługowa') || raw.includes('przemysłowa')) tags.push('budowlana');
+          // Check for budowlana (includes mieszkaniowa MN, usługowa, turystyczna)
+          if (raw.includes('budowlana') || raw.includes('budowl') || raw.includes('mieszkaniowa') || raw.includes('usługowa') || raw.includes('przemysłowa') || raw.includes('turyst')) tags.push('budowlana');
           // Check for siedliskowa
           if (raw.includes('siedlisk') || raw.includes('zagroda') || raw.includes('zagrodowa')) tags.push('siedliskowa');
           // Check for leśna
           if (raw.includes('leśna') || raw.includes('lesna') || raw.includes('las')) tags.push('leśna');
           // Check for rekreacyjna
-          if (raw.includes('rekre') || raw.includes('letnisk') || raw.includes('wypocz') || raw.includes('turyst')) tags.push('rekreacyjna');
+          if (raw.includes('rekre') || raw.includes('letnisk') || raw.includes('wypocz')) tags.push('rekreacyjna');
           // Check for rolna (after siedliskowa/leśna to avoid double-counting)
           if (raw.includes('rolna') || raw.includes('rolno') || raw.includes('rolnicza')) tags.push('rolna');
+          // Check for WZ (warunki zabudowy) — always appended last as supplementary tag
+          if (raw.includes('wz') || raw.includes('warunki zabudowy') || raw.includes('warunki')) tags.push('WZ');
           // If nothing matched → inne/brak danych
           if (tags.length === 0) return 'inne/brak danych';
           // Deduplicate and join
