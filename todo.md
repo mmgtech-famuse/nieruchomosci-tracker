@@ -60,11 +60,13 @@
 - [x] Tests: 12 tests passing (addRating, updateNotes, getRatingStats + existing tests)
 
 ## FB Description Field, Duplicate Detection & Alerts
-- [ ] Backend: accept optional `description` text in submitUrl alongside URL
-- [ ] Backend: use description as primary AI content source when provided
-- [ ] Backend: duplicate detection — check URL exists before extraction, return special error with existing listing ID
-- [ ] Backend: incomplete data flag — if ≥4 key fields are empty/brak danych, return warning with partial data
-- [ ] Frontend: expandable "Opis ogłoszenia" textarea (collapsed by default, toggle with "+ Dodaj opis")
-- [ ] Frontend: auto-detect Facebook/Instagram URLs and show inline hint before submission
-- [ ] Frontend: on duplicate URL — toast with link to existing row + auto-scroll and highlight that row
-- [ ] Frontend: on incomplete data — persistent warning toast suggesting to paste description text
+- [x] Backend: accept optional `description` text in submitUrl alongside URL
+- [x] Backend: use description as primary AI content source when provided
+- [x] Backend: duplicate detection — check URL exists before extraction, return special error with existing listing ID
+- [x] Backend: incomplete data flag — if ≥4 key fields are empty/brak danych, return warning with partial data
+- [x] Frontend: expandable "Opis ogłoszenia" textarea (collapsed by default, toggle with "+ Dodaj opis")
+- [x] Frontend: auto-detect Facebook/Instagram URLs and show inline hint before submission
+- [x] Frontend: on duplicate URL — toast with link to existing row + auto-scroll and highlight that row
+- [x] Frontend: on incomplete data — persistent warning toast suggesting to paste description text
+- [x] Frontend: on duplicate URL + description provided — auto-update existing listing via reextractUrl
+- [x] Frontend: on duplicate URL without description — toast with action button to open description field

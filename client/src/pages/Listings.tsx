@@ -239,6 +239,15 @@ export default function Listings() {
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
+  // Back-to-top
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const pageTopRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onScroll = () => setShowBackToTop(window.scrollY > 400);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   // Table refs
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const tableContainerRef = useRef<HTMLDivElement>(null); // click-outside wrapper
@@ -726,6 +735,7 @@ export default function Listings() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <div ref={pageTopRef} />
       <div className="max-w-[1600px] mx-auto px-4 py-6 space-y-4">
 
         {/* ── Header ── */}
@@ -1063,6 +1073,19 @@ export default function Listings() {
                                 if (pos) { mapRef.current.panTo(pos); mapRef.current.setZoom(12); showInfoWindow(listing, marker); }
                               }
                             }}
+                            onDoubleClick={() => {
+                              // Double-click: scroll to map and open info window
+                              const marker = markersRef.current.get(listing.id);
+                              if (marker && mapRef.current) {
+                                const pos = marker.position;
+                                if (pos) {
+                                  mapRef.current.panTo(pos);
+                                  mapRef.current.setZoom(13);
+                                  showInfoWindow(listing, marker);
+                                }
+                              }
+                              pageTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }}
                             onMouseEnter={() => setHoveredId(listing.id)}
                             onMouseLeave={() => setHoveredId(null)}
                           >
@@ -1145,6 +1168,20 @@ export default function Listings() {
             </CardContent>
           </Card>
         </div>
+
+        {/* ── Back to top button ── */}
+        {showBackToTop && (
+          <button
+            onClick={() => pageTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            className="fixed bottom-6 right-6 z-[10000] w-10 h-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+            title="Wróć do góry"
+            style={{ boxShadow: "0 4px 16px rgba(37,99,235,0.35)" }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="18 15 12 9 6 15" />
+            </svg>
+          </button>
+        )}
 
         {/* ── Fixed mirror scrollbar ── */}
         <div
