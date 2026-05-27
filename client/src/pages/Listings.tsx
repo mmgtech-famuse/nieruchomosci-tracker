@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MapView } from "@/components/Map";
 import { toast } from "sonner";
 import {
@@ -26,8 +25,6 @@ import type { Listing } from "@shared/types";
 
 function parsePricePLN(cena: string): number | null {
   if (!cena || cena === "-") return null;
-  // Handle Polish format: '375 000 zł', '375000', '375,000', '375.000'
-  // Remove currency symbols and non-numeric chars except spaces, commas, dots
   const stripped = cena.replace(/[złPLNzl\s]/gi, "").replace(/[,\.]/g, "");
   const num = parseFloat(stripped);
   if (isNaN(num)) return null;
@@ -48,6 +45,48 @@ function getPriceTier(cena: string): "green" | "yellow" | "orange" | "unknown" {
   if (price <= 300000) return "green";
   if (price <= 400000) return "yellow";
   return "orange";
+}
+
+/** Returns subtle row background tint + left border color based on price tier */
+function getRowTint(cena: string, isSelected: boolean, isHovered: boolean): React.CSSProperties {
+  const tier = getPriceTier(cena);
+  if (isSelected) {
+    // Strong highlight when selected (click from map or table)
+    const borderColors: Record<string, string> = {
+      green: "#16a34a",
+      yellow: "#ca8a04",
+      orange: "#ea580c",
+      unknown: "#64748b",
+    };
+    return {
+      backgroundColor: "#dbeafe",
+      borderLeft: `4px solid ${borderColors[tier]}`,
+      outline: "none",
+    };
+  }
+  if (isHovered) {
+    const bgColors: Record<string, string> = {
+      green: "#f0fdf4",
+      yellow: "#fefce8",
+      orange: "#fff7ed",
+      unknown: "#f8fafc",
+    };
+    return {
+      backgroundColor: bgColors[tier],
+      borderLeft: `4px solid ${getPriceColor(cena)}44`,
+    };
+  }
+  // Resting state: very subtle tint
+  const restBg: Record<string, string> = {
+    green: "#f0fdf480",
+    yellow: "#fefce880",
+    orange: "#fff7ed80",
+    unknown: "transparent",
+  };
+  return {
+    backgroundColor: restBg[tier],
+    borderLeft: `4px solid ${getPriceColor(cena)}22`,
+  };
 }
 
 // ─── Sort helpers ────────────────────────────────────────────────────────────
@@ -76,18 +115,25 @@ function sortListings(items: Listing[], key: SortKey, dir: SortDir): Listing[] {
 
 // ─── Column config ───────────────────────────────────────────────────────────
 
-const COLUMNS: { key: keyof Listing; label: string; sortable?: boolean; minW?: string }[] = [
-  { key: "id", label: "ID", sortable: true, minW: "50px" },
-  { key: "url", label: "URL", minW: "80px" },
-  { key: "wojewodztwo", label: "Województwo", sortable: true, minW: "120px" },
-  { key: "powiat", label: "Powiat", sortable: true, minW: "100px" },
-  { key: "gmina", label: "Gmina", sortable: true, minW: "100px" },
-  { key: "miejscowosc", label: "Miejscowość", sortable: true, minW: "120px" },
-  { key: "rozmiarDzialki", label: "Rozmiar działki", sortable: true, minW: "130px" },
-  { key: "media", label: "Media", minW: "120px" },
-  { key: "przeznaczenie", label: "Przeznaczenie", sortable: true, minW: "130px" },
-  { key: "zabudowania", label: "Zabudowania", minW: "130px" },
-  { key: "cena", label: "Cena", sortable: true, minW: "110px" },
+const COLUMNS: {
+  key: keyof Listing;
+  label: string;
+  sortable?: boolean;
+  minW?: string;
+  sticky?: "left" | "right";
+  stickyOffset?: number;
+}[] = [
+  { key: "id",            label: "ID",              sortable: true,  minW: "52px",  sticky: "left",  stickyOffset: 0 },
+  { key: "url",           label: "URL",                              minW: "72px" },
+  { key: "wojewodztwo",   label: "Województwo",     sortable: true,  minW: "130px" },
+  { key: "powiat",        label: "Powiat",           sortable: true,  minW: "110px" },
+  { key: "gmina",         label: "Gmina",            sortable: true,  minW: "110px" },
+  { key: "miejscowosc",   label: "Miejscowość",      sortable: true,  minW: "120px" },
+  { key: "rozmiarDzialki",label: "Rozmiar działki",  sortable: true,  minW: "130px" },
+  { key: "media",         label: "Media",                            minW: "130px" },
+  { key: "przeznaczenie", label: "Przeznaczenie",    sortable: true,  minW: "130px" },
+  { key: "zabudowania",   label: "Zabudowania",                      minW: "140px" },
+  { key: "cena",          label: "Cena",             sortable: true,  minW: "110px", sticky: "right", stickyOffset: 40 },
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -104,8 +150,9 @@ export default function Listings() {
   const [sortKey, setSortKey] = useState<SortKey>("id");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  // Selection / highlight
-  const [activeId, setActiveId] = useState<number | null>(null);
+  // Selection: hoveredId is transient (mouse), selectedId is persistent (click)
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
   // URL submission
   const [submitUrl, setSubmitUrl] = useState("");
@@ -117,8 +164,9 @@ export default function Listings() {
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
-  // Table row refs for auto-scroll
+  // Table refs
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   // Data
   const { data: allListings = [], isLoading, refetch } = trpc.listings.getAll.useQuery();
@@ -162,6 +210,17 @@ export default function Listings() {
     return c;
   }, [filtered]);
 
+  // ── Click-outside deselect ─────────────────────────────────────────────────
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (tableContainerRef.current && !tableContainerRef.current.contains(e.target as Node)) {
+        setSelectedId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   // ── Map: create/update markers ─────────────────────────────────────────────
   const handleMapReady = useCallback((map: google.maps.Map) => {
     mapRef.current = map;
@@ -169,10 +228,12 @@ export default function Listings() {
     setMapReady(true);
   }, []);
 
+  // The "active" id for map marker sizing: selected takes priority over hovered
+  const activeMapId = selectedId ?? hoveredId;
+
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
-    // Remove markers not in filtered set
     const filteredIds = new Set(filtered.map(l => l.id));
     markersRef.current.forEach((marker, id) => {
       if (!filteredIds.has(id)) {
@@ -181,7 +242,6 @@ export default function Listings() {
       }
     });
 
-    // Add/update markers
     filtered.forEach(listing => {
       if (!listing.latitude || !listing.longitude) return;
       const lat = parseFloat(String(listing.latitude));
@@ -189,17 +249,17 @@ export default function Listings() {
       if (isNaN(lat) || isNaN(lng)) return;
 
       const color = getPriceColor(listing.cena);
-      const isActive = activeId === listing.id;
-      const scale = isActive ? 1.4 : 1;
+      const isActive = activeMapId === listing.id;
+      const scale = isActive ? 1.45 : 1;
 
       if (markersRef.current.has(listing.id)) {
-        // Update existing marker content
         const existing = markersRef.current.get(listing.id)!;
-        existing.content = createPinElement(listing.id, color, scale);
+        existing.content = createPinElement(listing.id, color, scale, isActive);
+        existing.zIndex = isActive ? 999 : listing.id;
         return;
       }
 
-      const markerEl = createPinElement(listing.id, color, scale);
+      const markerEl = createPinElement(listing.id, color, scale, isActive);
       const marker = new google.maps.marker.AdvancedMarkerElement({
         position: { lat, lng },
         map: mapRef.current,
@@ -209,7 +269,7 @@ export default function Listings() {
       });
 
       marker.addListener("gmp-click", () => {
-        setActiveId(listing.id);
+        setSelectedId(listing.id);
         showInfoWindow(listing, marker);
         scrollToRow(listing.id);
       });
@@ -217,8 +277,7 @@ export default function Listings() {
       markersRef.current.set(listing.id, marker);
     });
 
-    // Fit bounds if no active selection
-    if (!activeId && markersRef.current.size > 0) {
+    if (!activeMapId && markersRef.current.size > 0) {
       const bounds = new google.maps.LatLngBounds();
       let hasPoints = false;
       markersRef.current.forEach(m => {
@@ -227,21 +286,22 @@ export default function Listings() {
       });
       if (hasPoints) mapRef.current.fitBounds(bounds, 40);
     }
-  }, [filtered, mapReady, activeId]);
+  }, [filtered, mapReady, activeMapId]);
 
-  // Update active marker size when activeId changes
+  // Update marker visuals when active id changes
   useEffect(() => {
     markersRef.current.forEach((marker, id) => {
       const listing = allListings.find(l => l.id === id);
       if (!listing) return;
       const color = getPriceColor(listing.cena);
-      const scale = activeId === id ? 1.4 : 1;
-      marker.content = createPinElement(id, color, scale);
-      marker.zIndex = activeId === id ? 999 : id;
+      const isActive = activeMapId === id;
+      const scale = isActive ? 1.45 : 1;
+      marker.content = createPinElement(id, color, scale, isActive);
+      marker.zIndex = isActive ? 999 : id;
     });
-  }, [activeId, allListings]);
+  }, [activeMapId, allListings]);
 
-  function createPinElement(id: number, color: string, scale: number): HTMLElement {
+  function createPinElement(id: number, color: string, scale: number, isActive: boolean): HTMLElement {
     const size = Math.round(28 * scale);
     const fontSize = Math.round(11 * scale);
     const el = document.createElement("div");
@@ -249,7 +309,7 @@ export default function Listings() {
       width: ${size}px;
       height: ${size}px;
       background: ${color};
-      border: 2px solid white;
+      border: ${isActive ? "3px solid white" : "2px solid white"};
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -258,7 +318,7 @@ export default function Listings() {
       font-weight: bold;
       color: white;
       cursor: pointer;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      box-shadow: ${isActive ? `0 0 0 3px ${color}66, 0 4px 12px rgba(0,0,0,0.4)` : "0 2px 6px rgba(0,0,0,0.35)"};
       transition: transform 0.15s ease;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       user-select: none;
@@ -269,7 +329,6 @@ export default function Listings() {
 
   function showInfoWindow(listing: Listing, marker: google.maps.marker.AdvancedMarkerElement) {
     if (!infoWindowRef.current) return;
-    const price = parsePricePLN(listing.cena);
     const color = getPriceColor(listing.cena);
     infoWindowRef.current.setContent(`
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-width: 200px; padding: 4px;">
@@ -290,7 +349,11 @@ export default function Listings() {
 
   function scrollToRow(id: number) {
     const row = rowRefs.current.get(id);
-    if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (row) {
+      // Scroll the table container horizontally to start (to show sticky ID col)
+      if (tableContainerRef.current) tableContainerRef.current.scrollLeft = 0;
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   }
 
   // ── URL submission ─────────────────────────────────────────────────────────
@@ -326,7 +389,7 @@ export default function Listings() {
       await deleteMutation.mutateAsync({ id });
       const marker = markersRef.current.get(id);
       if (marker) { marker.map = null; markersRef.current.delete(id); }
-      if (activeId === id) setActiveId(null);
+      if (selectedId === id) setSelectedId(null);
       await refetch();
       toast.success(`Oferta #${id} usunięta.`);
     } catch (err: any) {
@@ -349,8 +412,7 @@ export default function Listings() {
     return sortDir === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />;
   }
 
-  // ── Clear filters ──────────────────────────────────────────────────────────
-  const hasFilters = filterWoj || filterPrz || search;
+  const hasFilters = !!(filterWoj || filterPrz || search);
   function clearFilters() { setFilterWoj(""); setFilterPrz(""); setSearch(""); }
 
   if (isLoading) {
@@ -403,9 +465,7 @@ export default function Listings() {
                 >
                   {isSubmitting ? (
                     <><Loader2 className="w-4 h-4 animate-spin mr-1" /> Analizuję...</>
-                  ) : (
-                    "Dodaj"
-                  )}
+                  ) : "Dodaj"}
                 </Button>
               </div>
             </div>
@@ -419,7 +479,6 @@ export default function Listings() {
         <Card className="border border-slate-200 shadow-sm">
           <CardContent className="pt-4 pb-3">
             <div className="flex flex-wrap gap-3 items-end">
-              {/* Województwo */}
               <div className="flex flex-col gap-1 min-w-[160px]">
                 <label className="text-xs font-medium text-slate-600">Województwo</label>
                 <Select value={filterWoj || "__all__"} onValueChange={v => setFilterWoj(v === "__all__" ? "" : v)}>
@@ -433,7 +492,6 @@ export default function Listings() {
                 </Select>
               </div>
 
-              {/* Przeznaczenie */}
               <div className="flex flex-col gap-1 min-w-[160px]">
                 <label className="text-xs font-medium text-slate-600">Przeznaczenie</label>
                 <Select value={filterPrz || "__all__"} onValueChange={v => setFilterPrz(v === "__all__" ? "" : v)}>
@@ -447,7 +505,6 @@ export default function Listings() {
                 </Select>
               </div>
 
-              {/* Search */}
               <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
                 <label className="text-xs font-medium text-slate-600">Szukaj</label>
                 <div className="relative">
@@ -473,7 +530,6 @@ export default function Listings() {
               )}
             </div>
 
-            {/* Legend + counts */}
             <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-slate-100">
               <span className="text-xs text-slate-500 font-medium">
                 Wyświetlane: <span className="text-blue-600 font-bold">{filtered.length}</span> / {allListings.length}
@@ -489,6 +545,19 @@ export default function Listings() {
                   🟠 400k+ <span className="ml-1 bg-orange-200 text-orange-900 px-1 rounded">{counts.orange}</span>
                 </Badge>
               </div>
+              {selectedId && (
+                <span className="text-xs text-blue-600 font-medium flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  Zaznaczono: #{selectedId}
+                  <button
+                    className="ml-1 text-slate-400 hover:text-slate-600"
+                    onClick={() => setSelectedId(null)}
+                    title="Odznacz"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -508,59 +577,104 @@ export default function Listings() {
         {/* ── Table ── */}
         <Card className="border border-slate-200 shadow-sm">
           <CardHeader className="pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-semibold text-slate-700">
+            <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
               Tabela ofert ({filtered.length})
+              {selectedId && (
+                <span className="text-xs font-normal text-slate-400">
+                  — kliknij poza tabelą aby odznaczyć
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-slate-50 hover:bg-slate-50">
-                    {COLUMNS.map(col => (
-                      <TableHead
-                        key={col.key}
-                        className="text-xs font-semibold text-slate-600 whitespace-nowrap px-3 py-2"
-                        style={{ minWidth: col.minW }}
-                      >
-                        {col.sortable ? (
-                          <button
-                            className="flex items-center gap-1 hover:text-slate-900 transition-colors"
-                            onClick={() => toggleSort(col.key)}
-                          >
-                            {col.label}
-                            <SortIcon col={col.key} />
-                          </button>
-                        ) : col.label}
-                      </TableHead>
-                    ))}
-                    <TableHead className="text-xs font-semibold text-slate-600 px-3 py-2 w-10">
+            {/* Outer div captures click-outside via ref */}
+            <div ref={tableContainerRef} className="overflow-x-auto relative">
+              <table className="w-full text-xs border-collapse" style={{ minWidth: "1100px" }}>
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    {COLUMNS.map(col => {
+                      const isSticky = !!col.sticky;
+                      const stickyStyle: React.CSSProperties = isSticky
+                        ? {
+                            position: "sticky",
+                            [col.sticky === "left" ? "left" : "right"]: col.stickyOffset ?? 0,
+                            zIndex: 10,
+                            background: "#f8fafc",
+                            boxShadow: col.sticky === "left"
+                              ? "2px 0 4px -1px rgba(0,0,0,0.08)"
+                              : "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                          }
+                        : {};
+                      return (
+                        <th
+                          key={col.key}
+                          className="text-left font-semibold text-slate-600 whitespace-nowrap px-3 py-2"
+                          style={{ minWidth: col.minW, ...stickyStyle }}
+                        >
+                          {col.sortable ? (
+                            <button
+                              className="flex items-center gap-1 hover:text-slate-900 transition-colors"
+                              onClick={() => toggleSort(col.key)}
+                            >
+                              {col.label}
+                              <SortIcon col={col.key} />
+                            </button>
+                          ) : col.label}
+                        </th>
+                      );
+                    })}
+                    {/* Actions column — sticky right at 0 */}
+                    <th
+                      className="text-left font-semibold text-slate-600 px-3 py-2 w-10"
+                      style={{
+                        position: "sticky",
+                        right: 0,
+                        zIndex: 10,
+                        background: "#f8fafc",
+                        boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                        minWidth: "40px",
+                      }}
+                    >
                       Akcje
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
                   {filtered.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={COLUMNS.length + 1} className="text-center text-slate-400 py-12 text-sm">
+                    <tr>
+                      <td colSpan={COLUMNS.length + 1} className="text-center text-slate-400 py-12 text-sm">
                         Brak ofert spełniających kryteria
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ) : (
                     filtered.map(listing => {
-                      const isActive = activeId === listing.id;
+                      const isSelected = selectedId === listing.id;
+                      const isHovered = hoveredId === listing.id && !isSelected;
+                      const rowStyle = getRowTint(listing.cena, isSelected, isHovered);
                       const priceColor = getPriceColor(listing.cena);
+
+                      // Sticky cell backgrounds must match row bg
+                      const stickyBg = isSelected ? "#dbeafe" : isHovered
+                        ? (getPriceTier(listing.cena) === "green" ? "#f0fdf4"
+                          : getPriceTier(listing.cena) === "yellow" ? "#fefce8"
+                          : getPriceTier(listing.cena) === "orange" ? "#fff7ed" : "#f8fafc")
+                        : (getPriceTier(listing.cena) === "green" ? "#f0fdf480"
+                          : getPriceTier(listing.cena) === "yellow" ? "#fefce880"
+                          : getPriceTier(listing.cena) === "orange" ? "#fff7ed80" : "white");
+
                       return (
-                        <TableRow
+                        <tr
                           key={listing.id}
                           ref={el => { if (el) rowRefs.current.set(listing.id, el); else rowRefs.current.delete(listing.id); }}
-                          className={`cursor-pointer text-xs transition-colors ${
-                            isActive
-                              ? "bg-blue-50 hover:bg-blue-100"
-                              : "hover:bg-slate-50"
-                          }`}
+                          style={rowStyle}
+                          className="cursor-pointer transition-colors border-b border-slate-100 last:border-0"
                           onClick={() => {
-                            setActiveId(listing.id);
+                            // Toggle selection: click same row again to deselect
+                            if (selectedId === listing.id) {
+                              setSelectedId(null);
+                              return;
+                            }
+                            setSelectedId(listing.id);
                             const marker = markersRef.current.get(listing.id);
                             if (marker && mapRef.current) {
                               const pos = marker.position;
@@ -571,13 +685,31 @@ export default function Listings() {
                               }
                             }
                           }}
-                          onMouseEnter={() => setActiveId(listing.id)}
-                          onMouseLeave={() => setActiveId(null)}
+                          onMouseEnter={() => setHoveredId(listing.id)}
+                          onMouseLeave={() => setHoveredId(null)}
                         >
-                          {/* ID */}
-                          <TableCell className="px-3 py-2 font-bold text-slate-800">{listing.id}</TableCell>
+                          {/* ID — sticky left */}
+                          <td
+                            className="px-3 py-2 font-bold text-slate-800 whitespace-nowrap"
+                            style={{
+                              position: "sticky",
+                              left: 0,
+                              zIndex: 5,
+                              background: stickyBg,
+                              boxShadow: "2px 0 4px -1px rgba(0,0,0,0.08)",
+                            }}
+                          >
+                            {isSelected && (
+                              <span
+                                className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 mb-0.5"
+                                style={{ background: priceColor }}
+                              />
+                            )}
+                            {listing.id}
+                          </td>
+
                           {/* URL */}
-                          <TableCell className="px-3 py-2">
+                          <td className="px-3 py-2">
                             <a
                               href={listing.url}
                               target="_blank"
@@ -586,41 +718,62 @@ export default function Listings() {
                               onClick={e => e.stopPropagation()}
                             >
                               <ExternalLink className="w-3 h-3" />
-                              <span className="truncate max-w-[120px]">Link</span>
+                              <span className="truncate max-w-[100px]">Link</span>
                             </a>
-                          </TableCell>
+                          </td>
+
                           {/* Województwo */}
-                          <TableCell className="px-3 py-2 text-slate-700">{listing.wojewodztwo}</TableCell>
+                          <td className="px-3 py-2 text-slate-700 whitespace-nowrap">{listing.wojewodztwo}</td>
                           {/* Powiat */}
-                          <TableCell className="px-3 py-2 text-slate-600">{listing.powiat}</TableCell>
+                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{listing.powiat}</td>
                           {/* Gmina */}
-                          <TableCell className="px-3 py-2 text-slate-600">{listing.gmina}</TableCell>
+                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{listing.gmina}</td>
                           {/* Miejscowość */}
-                          <TableCell className="px-3 py-2 font-medium text-slate-800">{listing.miejscowosc}</TableCell>
+                          <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{listing.miejscowosc}</td>
                           {/* Rozmiar działki */}
-                          <TableCell className="px-3 py-2 text-slate-600">{listing.rozmiarDzialki}</TableCell>
+                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{listing.rozmiarDzialki}</td>
                           {/* Media */}
-                          <TableCell className="px-3 py-2 text-slate-600 max-w-[150px]">
+                          <td className="px-3 py-2 text-slate-600 max-w-[150px]">
                             <span className="truncate block" title={listing.media}>{listing.media}</span>
-                          </TableCell>
+                          </td>
                           {/* Przeznaczenie */}
-                          <TableCell className="px-3 py-2">
+                          <td className="px-3 py-2 whitespace-nowrap">
                             {listing.przeznaczenie !== "-" ? (
                               <Badge variant="outline" className="text-xs font-normal">{listing.przeznaczenie}</Badge>
                             ) : "-"}
-                          </TableCell>
+                          </td>
                           {/* Zabudowania */}
-                          <TableCell className="px-3 py-2 text-slate-600 max-w-[150px]">
+                          <td className="px-3 py-2 text-slate-600 max-w-[150px]">
                             <span className="truncate block" title={listing.zabudowania}>{listing.zabudowania}</span>
-                          </TableCell>
-                          {/* Cena */}
-                          <TableCell className="px-3 py-2">
+                          </td>
+
+                          {/* Cena — sticky right */}
+                          <td
+                            className="px-3 py-2 whitespace-nowrap"
+                            style={{
+                              position: "sticky",
+                              right: 40,
+                              zIndex: 5,
+                              background: stickyBg,
+                              boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                            }}
+                          >
                             <span className="font-bold text-sm" style={{ color: priceColor }}>
                               {listing.cena}
                             </span>
-                          </TableCell>
-                          {/* Actions */}
-                          <TableCell className="px-3 py-2">
+                          </td>
+
+                          {/* Actions — sticky right at 0 */}
+                          <td
+                            className="px-3 py-2"
+                            style={{
+                              position: "sticky",
+                              right: 0,
+                              zIndex: 5,
+                              background: stickyBg,
+                              boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                            }}
+                          >
                             <button
                               className="text-slate-300 hover:text-red-500 transition-colors"
                               onClick={e => { e.stopPropagation(); handleDelete(listing.id); }}
@@ -628,13 +781,13 @@ export default function Listings() {
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
-                          </TableCell>
-                        </TableRow>
+                          </td>
+                        </tr>
                       );
                     })
                   )}
-                </TableBody>
-              </Table>
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>
