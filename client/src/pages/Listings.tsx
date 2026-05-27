@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { MapView } from "@/components/Map";
 import { toast } from "sonner";
 import {
@@ -12,6 +14,7 @@ import {
   ChevronUp,
   ChevronDown,
   ExternalLink,
+  GitCompareArrows,
   Loader2,
   MapPin,
   Plus,
@@ -225,6 +228,19 @@ export default function Listings() {
   // Selection
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  // Compare mode
+  const [compareIds, setCompareIds] = useState<Set<number>>(new Set());
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  const toggleCompare = useCallback((id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCompareIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+  }, []);
 
   // URL submission
   const [submitUrl, setSubmitUrl] = useState("");
@@ -729,7 +745,12 @@ export default function Listings() {
     { key: "cena",           label: "Cena",            sortable: true,  filterable: true,  filterType: "text",   sticky: "right", stickyOffset: 36,  width: 100 },
   ];
 
-  const totalWidth = COLUMNS.reduce((s, c) => s + c.width, 0) + 36; // +36 for actions
+  const totalWidth = COLUMNS.reduce((s, c) => s + c.width, 0) + 36 + 32; // +36 for actions, +32 for compare checkbox
+
+  // Listings selected for comparison (from current filtered set)
+  const compareListings = useMemo(() => {
+    return (allListings ?? []).filter(l => compareIds.has(l.id));
+  }, [allListings, compareIds]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -953,6 +974,7 @@ export default function Listings() {
               <div ref={tableScrollRef} className="overflow-x-auto relative">
                 <table className="w-full text-xs border-collapse" style={{ minWidth: `${totalWidth}px`, tableLayout: "fixed" }}>
                   <colgroup>
+                    <col style={{ width: "32px" }} />
                     {COLUMNS.map(col => <col key={col.key} style={{ width: `${col.width}px` }} />)}
                     <col style={{ width: "36px" }} />
                   </colgroup>
@@ -960,6 +982,22 @@ export default function Listings() {
                   {/* ── Header row ── */}
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
+                      {/* Compare checkbox header — select all filtered */}
+                      <th className="px-1 py-2" style={{ position: "sticky", left: 0, zIndex: 11, background: "#f8fafc", width: "32px" }}>
+                        <Checkbox
+                          checked={filtered.length > 0 && filtered.every(l => compareIds.has(l.id))}
+                          onCheckedChange={checked => {
+                            setCompareIds(prev => {
+                              const next = new Set(prev);
+                              if (checked) { filtered.forEach(l => next.add(l.id)); }
+                              else { filtered.forEach(l => next.delete(l.id)); }
+                              return next;
+                            });
+                          }}
+                          title={filtered.every(l => compareIds.has(l.id)) ? "Odznacz wszystkie" : "Zaznacz wszystkie"}
+                          className="w-3.5 h-3.5"
+                        />
+                      </th>
                       {COLUMNS.map(col => {
                         const isSticky = !!col.sticky;
                         const stickyStyle: React.CSSProperties = isSticky ? {
@@ -987,6 +1025,8 @@ export default function Listings() {
 
                     {/* ── Column filter row ── */}
                     <tr className="bg-white border-b border-slate-100">
+                      {/* Empty cell for compare checkbox column */}
+                      <td className="px-1 py-1" style={{ position: "sticky", left: 0, zIndex: 10, background: "white", width: "32px" }} />
                       {COLUMNS.map(col => {
                         const isSticky = !!col.sticky;
                         const stickyStyle: React.CSSProperties = isSticky ? {
@@ -1058,6 +1098,8 @@ export default function Listings() {
                           : isHovered ? (tier === "green" ? "#f0fdf4" : tier === "yellow" ? "#fefce8" : tier === "orange" ? "#fff7ed" : "#f8fafc")
                           : (tier === "green" ? "#f0fdf480" : tier === "yellow" ? "#fefce880" : tier === "orange" ? "#fff7ed80" : "white");
 
+                        const isCompared = compareIds.has(listing.id);
+
                         return (
                           <tr
                             key={listing.id}
@@ -1089,8 +1131,18 @@ export default function Listings() {
                             onMouseEnter={() => setHoveredId(listing.id)}
                             onMouseLeave={() => setHoveredId(null)}
                           >
-                            {/* ID — sticky left */}
-                            <td className="px-2 py-2 font-bold text-slate-800 whitespace-nowrap" style={{ position: "sticky", left: 0, zIndex: 5, background: stickyBg, boxShadow: "2px 0 4px -1px rgba(0,0,0,0.08)" }}>
+                            {/* Compare checkbox — sticky left:0 */}
+                            <td className="px-1 py-2" style={{ position: "sticky", left: 0, zIndex: 5, background: stickyBg, width: "32px" }}>
+                              <Checkbox
+                                checked={isCompared}
+                                onCheckedChange={() => {}}
+                                onClick={e => toggleCompare(listing.id, e as React.MouseEvent)}
+                                className="w-3.5 h-3.5"
+                              />
+                            </td>
+
+                            {/* ID — sticky left:32 */}
+                            <td className="px-2 py-2 font-bold text-slate-800 whitespace-nowrap" style={{ position: "sticky", left: 32, zIndex: 5, background: stickyBg, boxShadow: "2px 0 4px -1px rgba(0,0,0,0.08)" }}>
                               {isSelected && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 mb-0.5" style={{ background: priceColor }} />}
                               {listing.id}
                             </td>
@@ -1168,6 +1220,165 @@ export default function Listings() {
             </CardContent>
           </Card>
         </div>
+
+        {/* ── Floating compare bar ── */}
+        {compareIds.size > 0 && (
+          <div
+            className="fixed z-[10001] flex items-center gap-3 px-4 py-2.5 rounded-xl shadow-xl"
+            style={{
+              bottom: "28px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "linear-gradient(135deg, #1e40af 0%, #2563eb 100%)",
+              boxShadow: "0 8px 32px rgba(37,99,235,0.45)",
+            }}
+          >
+            <GitCompareArrows className="w-4 h-4 text-white flex-shrink-0" />
+            <span className="text-white text-sm font-semibold">
+              {compareIds.size} {compareIds.size === 1 ? "oferta" : compareIds.size < 5 ? "oferty" : "ofert"} zaznaczone
+            </span>
+            <Button
+              size="sm"
+              className="h-7 px-3 text-xs bg-white text-blue-700 hover:bg-blue-50 font-semibold"
+              onClick={() => setCompareOpen(true)}
+            >
+              Porównaj
+            </Button>
+            <button
+              className="text-blue-200 hover:text-white text-xs ml-1 transition-colors"
+              onClick={() => setCompareIds(new Set())}
+              title="Wyczyść zaznaczenie"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* ── Compare Sheet panel ── */}
+        <Sheet open={compareOpen} onOpenChange={setCompareOpen}>
+          <SheetContent
+            side="right"
+            className="w-full overflow-y-auto p-0"
+            style={{ maxWidth: `${Math.min(compareListings.length * 280 + 40, 1200)}px` }}
+          >
+            <SheetHeader className="px-6 py-4 border-b border-slate-200 bg-slate-50">
+              <SheetTitle className="flex items-center gap-2 text-slate-800">
+                <GitCompareArrows className="w-5 h-5 text-blue-600" />
+                Porównanie ofert ({compareListings.length})
+              </SheetTitle>
+            </SheetHeader>
+
+            <div className="p-4 overflow-x-auto">
+              {compareListings.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-12">Brak zaznaczonych ofert</p>
+              ) : (
+                <table className="w-full text-xs border-collapse" style={{ minWidth: `${compareListings.length * 260}px` }}>
+                  <colgroup>
+                    <col style={{ width: "130px" }} />
+                    {compareListings.map(l => <col key={l.id} style={{ width: "260px" }} />)}
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th className="text-left text-slate-500 font-medium px-3 py-2 bg-slate-50 border-b border-slate-200">Pole</th>
+                      {compareListings.map(l => {
+                        const color = getPriceColor(l.cena);
+                        const tier = getPriceTier(l.cena);
+                        const tierBg = tier === "green" ? "#f0fdf4" : tier === "yellow" ? "#fefce8" : tier === "orange" ? "#fff7ed" : "#f8fafc";
+                        return (
+                          <th key={l.id} className="px-3 py-2 border-b border-slate-200 text-left" style={{ background: tierBg }}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-6 h-6 rounded-full flex items-center justify-center text-white font-bold text-[10px] flex-shrink-0" style={{ background: color }}>{l.id}</div>
+                              <span className="font-bold text-slate-800 text-sm">{l.miejscowosc || "-"}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-500">{l.gmina}, {l.powiat}</div>
+                            <div className="mt-1 flex items-center gap-2">
+                              <a
+                                href={l.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-500 hover:text-blue-700 flex items-center gap-1 text-[11px]"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                <ExternalLink className="w-3 h-3" /> Ogłoszenie
+                              </a>
+                              <button
+                                className="text-slate-400 hover:text-blue-600 flex items-center gap-1 text-[11px] transition-colors"
+                                onClick={() => {
+                                  setCompareOpen(false);
+                                  setSelectedId(l.id);
+                                  const marker = markersRef.current.get(l.id);
+                                  if (marker && mapRef.current) {
+                                    const pos = marker.position;
+                                    if (pos) { mapRef.current.panTo(pos); mapRef.current.setZoom(13); showInfoWindow(l, marker); }
+                                  }
+                                  pageTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }}
+                              >
+                                <MapPin className="w-3 h-3" /> Mapa
+                              </button>
+                            </div>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {([
+                      { label: "Województwo", render: (l: Listing) => l.wojewodztwo },
+                      { label: "Powiat",       render: (l: Listing) => l.powiat },
+                      { label: "Gmina",        render: (l: Listing) => l.gmina },
+                      { label: "Miejscowość",  render: (l: Listing) => l.miejscowosc },
+                      { label: "Rozmiar działki", render: (l: Listing) => l.rozmiarDzialki },
+                      { label: "Media",        render: (l: Listing) => l.media },
+                      { label: "Przeznaczenie", render: (l: Listing) => l.przeznaczenie },
+                      { label: "Zabudowania",  render: (l: Listing) => l.zabudowania },
+                      { label: "Notatki",      render: (l: Listing) => l.notes },
+                      {
+                        label: "Ocena",
+                        render: (l: Listing) => {
+                          const s = ratingStats[l.id];
+                          return s ? `★ ${s.avg.toFixed(1)} (${s.count})` : "—";
+                        },
+                      },
+                      {
+                        label: "Cena",
+                        render: (l: Listing) => l.cena,
+                        isPrice: true,
+                      },
+                    ] as { label: string; render: (l: Listing) => string | null | undefined; isPrice?: boolean }[]).map((row, ri) => (
+                      <tr key={row.label} className={ri % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                        <td className="px-3 py-2 font-medium text-slate-600 border-r border-slate-100 whitespace-nowrap">{row.label}</td>
+                        {compareListings.map(l => {
+                          const val = row.render(l);
+                          const color = row.isPrice ? getPriceColor(l.cena) : undefined;
+                          return (
+                            <td key={l.id} className="px-3 py-2 text-slate-700 border-r border-slate-100" style={{ whiteSpace: "pre-wrap", lineHeight: "1.5" }}>
+                              {row.isPrice ? (
+                                <span className="font-bold text-sm" style={{ color }}>{val || "—"}</span>
+                              ) : (
+                                val || <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-between items-center bg-slate-50">
+              <button
+                className="text-sm text-slate-500 hover:text-red-500 transition-colors flex items-center gap-1"
+                onClick={() => { setCompareIds(new Set()); setCompareOpen(false); }}
+              >
+                <X className="w-4 h-4" /> Wyczyść zaznaczenie
+              </button>
+              <Button variant="outline" size="sm" onClick={() => setCompareOpen(false)}>Zamknij</Button>
+            </div>
+          </SheetContent>
+        </Sheet>
 
         {/* ── Back to top button ── */}
         {showBackToTop && (

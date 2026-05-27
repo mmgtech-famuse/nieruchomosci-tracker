@@ -70,3 +70,14 @@
 - [x] Frontend: on incomplete data — persistent warning toast suggesting to paste description text
 - [x] Frontend: on duplicate URL + description provided — auto-update existing listing via reextractUrl
 - [x] Frontend: on duplicate URL without description — toast with action button to open description field
+
+## Compare Mode
+- [x] Frontend: leading checkbox column in table (sticky left:0, shifts ID to left:32)
+- [x] Frontend: "select all filtered" checkbox in table header row
+- [x] Frontend: per-row Checkbox that toggles compareIds Set (stops row-click propagation)
+- [x] Frontend: floating compare bar (fixed bottom center) showing count + "Porównaj" + "Wyczyść" buttons
+- [x] Frontend: Sheet panel (right side, wide) with side-by-side comparison table
+- [x] Frontend: comparison panel shows all key fields (ID, miejscowość, rozmiar działki, media, przeznaczenie, zabudowania, cena, ocena, notatki) for each selected listing
+- [x] Frontend: price-tier color coding in comparison panel headers and Cena row
+- [x] Frontend: "Ogłoszenie" link and "Mapa" button per listing in compare panel (closes sheet, pans map, opens info window)
+- [x] Frontend: "Wyczyść zaznaczenie" button in compare panel footer
