@@ -490,6 +490,125 @@ export const appRouter = router({
       return { success, failed, total: rows.length, results };
     }),
 
+    /** Re-extract data for an existing listing (update with new description) */
+    reextractUrl: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        description: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { listings } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        const { invokeLLM } = await import("./_core/llm");
+        const { makeRequest } = await import("./_core/map");
+
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
+
+        const rows = await db.select().from(listings).where(eq(listings.id, input.id)).limit(1);
+        if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Listing not found" });
+        const existing = rows[0];
+
+        // Try fetching page content if no description provided
+        let pageContent = input.description || "";
+        if (!pageContent) {
+          try {
+            const resp = await fetch(existing.url, {
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" },
+              signal: AbortSignal.timeout(12000),
+            });
+            const html = await resp.text();
+            pageContent = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+          } catch { /* use empty */ }
+        }
+
+        if (!pageContent.trim()) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Brak treści do analizy. Wklej opis ogłoszenia." });
+        }
+
+        const PRZEZNACZENIE_TAGS = ["budowlana", "rolna", "siedliskowa", "leśna", "rekreacyjna", "WZ"];
+        const systemPrompt = `Jesteś ekspertem od analizy ogłoszeń nieruchomości w Polsce. Wyciągnij dane z tekstu ogłoszenia i zwróć JSON.`;
+        const userPrompt = `Przeanalizuj poniższy tekst ogłoszenia i wyciągnij dane. Zwróć JSON z polami:
+- wojewodztwo: nazwa województwa (np. "mazowieckie")
+- powiat: nazwa powiatu
+- gmina: nazwa gminy
+- miejscowosc: nazwa miejscowości
+- rozmiarDzialki: rozmiar działki z jednostką (np. "1500 m²", "0.5 ha")
+- media: dostępne media (prąd, woda, gaz, kanalizacja, szambo itp.)
+- przeznaczenie: TYLKO tagi z listy: ${PRZEZNACZENIE_TAGS.join(", ")} — możliwe kombinacje np. "budowlana, rolna"
+- zabudowania: opis zabudowań (lub "brak" jeśli brak)
+- cena: cena w formacie "XXX XXX zł" (lub "brak danych")
+
+Tekst ogłoszenia:
+${pageContent.slice(0, 6000)}`;
+
+        const llmResp = await invokeLLM({
+          messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "listing_data",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  wojewodztwo: { type: "string" }, powiat: { type: "string" }, gmina: { type: "string" },
+                  miejscowosc: { type: "string" }, rozmiarDzialki: { type: "string" }, media: { type: "string" },
+                  przeznaczenie: { type: "string" }, zabudowania: { type: "string" }, cena: { type: "string" },
+                },
+                required: ["wojewodztwo","powiat","gmina","miejscowosc","rozmiarDzialki","media","przeznaczenie","zabudowania","cena"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+
+        const raw = JSON.parse(llmResp.choices[0].message.content as string);
+
+        // Normalize przeznaczenie
+        const rawP = (raw.przeznaczenie || "").toLowerCase();
+        const tags: string[] = [];
+        if (/budowl|mieszk|usług|przemys/.test(rawP)) tags.push("budowlana");
+        if (/rolna|rolne|rolny|rolno/.test(rawP)) tags.push("rolna");
+        if (/siedlisk/.test(rawP)) tags.push("siedliskowa");
+        if (/leśn|lesn|las/.test(rawP)) tags.push("leśna");
+        if (/rekreac|letnisk|wypocz|turyst/.test(rawP)) tags.push("rekreacyjna");
+        if (/wz|warunki zabudowy/.test(rawP)) tags.push("WZ");
+        const normalizedPrzeznaczenie = tags.length > 0 ? tags.join(", ") : "inne/brak danych";
+
+        const updateData: Record<string, string> = {
+          wojewodztwo: raw.wojewodztwo || existing.wojewodztwo || "",
+          powiat: raw.powiat || existing.powiat || "",
+          gmina: raw.gmina || existing.gmina || "",
+          miejscowosc: raw.miejscowosc || existing.miejscowosc || "",
+          rozmiarDzialki: raw.rozmiarDzialki || existing.rozmiarDzialki || "",
+          media: raw.media || existing.media || "",
+          przeznaczenie: normalizedPrzeznaczenie,
+          zabudowania: raw.zabudowania || existing.zabudowania || "",
+          cena: raw.cena || existing.cena || "",
+        };
+
+        await db.update(listings).set(updateData).where(eq(listings.id, input.id));
+
+        // Re-geocode if location changed
+        const locParts = [updateData.miejscowosc, updateData.gmina, updateData.powiat, updateData.wojewodztwo]
+          .filter(p => p && p !== "-" && p !== "brak danych" && p !== "N/A" && p.length > 1)
+          .slice(0, 3);
+        if (locParts.length > 0) {
+          try {
+            const geoResult = (await makeRequest<{ results: Array<{ geometry: { location: { lat: number; lng: number } } }>, status: string }>("/maps/api/geocode/json", { address: [...locParts, "Polska"].join(", "), language: "pl" }));
+            if (geoResult?.results?.[0]?.geometry?.location) {
+              const loc = geoResult.results[0].geometry.location;
+              await db.update(listings).set({ latitude: String(loc.lat), longitude: String(loc.lng) }).where(eq(listings.id, input.id));
+            }
+          } catch { /* ignore geocode errors */ }
+        }
+
+        const updated = await db.select().from(listings).where(eq(listings.id, input.id)).limit(1);
+        return { success: true, listing: updated[0] };
+      }),
+
     /** Update a single field on a listing (for inline editing) */
     updateField: publicProcedure
       .input(z.object({

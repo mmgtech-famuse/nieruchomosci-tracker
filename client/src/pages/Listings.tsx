@@ -256,6 +256,7 @@ export default function Listings() {
   const addRatingMutation = trpc.listings.addRating.useMutation();
   const geocodeMissingMutation = trpc.listings.geocodeMissing.useMutation();
   const updateFieldMutation = trpc.listings.updateField.useMutation();
+  const reextractMutation = trpc.listings.reextractUrl.useMutation();
   const [isGeocodingMissing, setIsGeocodingMissing] = useState(false);
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
   const [editingValue, setEditingValue] = useState("");
@@ -541,16 +542,47 @@ export default function Listings() {
       // Duplicate detection
       if (msg.startsWith("DUPLICATE:")) {
         const dupId = parseInt(msg.replace("DUPLICATE:", ""), 10);
-        toast.error("⚠ Oferta już istnieje w bazie", {
-          description: `Ta oferta została już dodana jako #${dupId}. Przewijam do niej w tabeli.`,
-          duration: 6000,
-        });
-        // Scroll to and highlight the duplicate row
-        setSelectedId(dupId);
-        setTimeout(() => {
-          const row = rowRefs.current.get(dupId);
-          if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
-        }, 300);
+        const hasDesc = submitDescription.trim().length > 0;
+
+        if (hasDesc) {
+          // User provided a description — auto-update the existing listing
+          try {
+            await reextractMutation.mutateAsync({ id: dupId, description: submitDescription.trim() });
+            await refetch();
+            setSubmitUrl("");
+            setSubmitDescription("");
+            setShowDescriptionField(false);
+            toast.success(`Zaktualizowano ofertę #${dupId}`, {
+              description: "Dane istniejącej oferty zostały odświeżone na podstawie wklejonego opisu.",
+              duration: 6000,
+            });
+            setSelectedId(dupId);
+            setTimeout(() => {
+              const row = rowRefs.current.get(dupId);
+              if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 300);
+          } catch (reErr: unknown) {
+            const reMsg = reErr instanceof Error ? reErr.message : "Nieznany błąd";
+            toast.error("Błąd aktualizacji", { description: reMsg });
+          }
+        } else {
+          // No description — show toast with action button to update
+          setSelectedId(dupId);
+          setTimeout(() => {
+            const row = rowRefs.current.get(dupId);
+            if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+          }, 300);
+          toast.warning(`⚠ Oferta #${dupId} już istnieje w bazie`, {
+            description: isFbUrl
+              ? "Kliknij '+ Dodaj opis' i wklej treść ogłoszenia — zaktualizuję dane istniejącej oferty."
+              : "Ta oferta już jest w tabeli. Aby odświeżyć jej dane, kliknij '+ Dodaj opis' i wklej treść ogłoszenia.",
+            duration: 8000,
+            action: {
+              label: "+ Dodaj opis",
+              onClick: () => setShowDescriptionField(true),
+            },
+          });
+        }
       } else {
         toast.error("Błąd podczas dodawania", { description: msg });
       }
