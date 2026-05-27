@@ -228,7 +228,10 @@ export default function Listings() {
 
   // URL submission
   const [submitUrl, setSubmitUrl] = useState("");
+  const [submitDescription, setSubmitDescription] = useState("");
+  const [showDescriptionField, setShowDescriptionField] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isFbUrl = submitUrl.includes("facebook.com") || submitUrl.includes("fb.com");
 
   // Map refs
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -506,11 +509,25 @@ export default function Listings() {
     if (!submitUrl.trim()) return;
     setIsSubmitting(true);
     try {
-      const result = await submitMutation.mutateAsync({ url: submitUrl.trim() });
+      const result = await submitMutation.mutateAsync({
+        url: submitUrl.trim(),
+        description: submitDescription.trim() || undefined,
+      });
       await refetch();
       setSubmitUrl("");
-      const meta = (result as { _meta?: { fetchSuccess: boolean; geocoded: boolean } })._meta;
-      if (meta?.fetchSuccess) {
+      setSubmitDescription("");
+      setShowDescriptionField(false);
+      const meta = (result as { _meta?: { fetchSuccess: boolean; geocoded: boolean; isFacebook: boolean; incompleteData: boolean; hasUserDescription: boolean } })._meta;
+      if (meta?.incompleteData && !meta.hasUserDescription) {
+        // Incomplete data — suggest pasting description
+        toast.warning(`Dodano ofertę #${result.id} — dane niekompletne`, {
+          description: meta.isFacebook
+            ? "💡 Facebook blokuje pobieranie treści. Dla pełnych danych wklej opis ogłoszenia w polu \"+ Dodaj opis\"."
+            : "💡 Nie udało się odczytać strony. Spróbuj wkleić opis ogłoszenia ręcznie.",
+          duration: 8000,
+        });
+        setShowDescriptionField(true); // auto-expand description field
+      } else if (meta?.fetchSuccess || meta?.hasUserDescription) {
         toast.success(`Dodano ofertę #${result.id} — ${result.miejscowosc}`, {
           description: meta.geocoded ? "✓ Zlokalizowano na mapie" : "⚠ Brak współrzędnych — pin nie pojawi się na mapie",
         });
@@ -521,7 +538,22 @@ export default function Listings() {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Nieznany błąd";
-      toast.error("Błąd podczas dodawania", { description: msg });
+      // Duplicate detection
+      if (msg.startsWith("DUPLICATE:")) {
+        const dupId = parseInt(msg.replace("DUPLICATE:", ""), 10);
+        toast.error("⚠ Oferta już istnieje w bazie", {
+          description: `Ta oferta została już dodana jako #${dupId}. Przewijam do niej w tabeli.`,
+          duration: 6000,
+        });
+        // Scroll to and highlight the duplicate row
+        setSelectedId(dupId);
+        setTimeout(() => {
+          const row = rowRefs.current.get(dupId);
+          if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 300);
+      } else {
+        toast.error("Błąd podczas dodawania", { description: msg });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -690,7 +722,8 @@ export default function Listings() {
 
         {/* ── Add listing ── */}
         <Card className="border border-blue-100 bg-blue-50/40 shadow-sm">
-          <CardContent className="pt-4 pb-4">
+          <CardContent className="pt-4 pb-4 space-y-3">
+            {/* Row 1: URL input */}
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 text-sm font-medium text-blue-700 flex-shrink-0 w-28">
                 <Plus className="w-4 h-4" />
@@ -701,9 +734,21 @@ export default function Listings() {
                 placeholder="Wklej link do oferty (OLX, Facebook, Otodom...)"
                 value={submitUrl}
                 onChange={e => setSubmitUrl(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && !isSubmitting && handleSubmit()}
+                onKeyDown={e => e.key === "Enter" && !isSubmitting && !showDescriptionField && handleSubmit()}
                 disabled={isSubmitting}
               />
+              <button
+                type="button"
+                onClick={() => setShowDescriptionField(v => !v)}
+                className={`h-9 px-3 text-xs rounded-md border flex-shrink-0 transition-colors ${
+                  showDescriptionField
+                    ? "bg-amber-100 border-amber-300 text-amber-700 hover:bg-amber-200"
+                    : "bg-white border-blue-200 text-blue-600 hover:bg-blue-50"
+                }`}
+                title="Wklej opis ogłoszenia (pomocne dla Facebook i innych stron blokujących pobieranie)"
+              >
+                {showDescriptionField ? "✕ Ukryj opis" : "+ Dodaj opis"}
+              </button>
               <Button
                 onClick={handleSubmit}
                 disabled={isSubmitting || !submitUrl.trim()}
@@ -712,9 +757,45 @@ export default function Listings() {
                 {isSubmitting ? <><Loader2 className="w-4 h-4 animate-spin mr-1" /> Analizuję...</> : "Dodaj"}
               </Button>
             </div>
-            <p className="text-xs text-blue-600/70 mt-2 ml-[calc(7rem+12px)]">
-              AI automatycznie wyciągnie dane: województwo, powiat, gmina, miejscowość, rozmiar działki, media, przeznaczenie, zabudowania, cena
-            </p>
+
+            {/* FB hint */}
+            {isFbUrl && !showDescriptionField && (
+              <div className="ml-[calc(7rem+12px)] flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                <span className="text-base leading-none mt-0.5">💡</span>
+                <span>
+                  <strong>Wykryto link Facebook.</strong> Facebook blokuje automatyczne pobieranie treści.
+                  Dla pełnych danych kliknij <strong>"+ Dodaj opis"</strong> i wklej tekst ogłoszenia skopiowany ze strony.
+                </span>
+              </div>
+            )}
+
+            {/* Description textarea */}
+            {showDescriptionField && (
+              <div className="ml-[calc(7rem+12px)] space-y-1">
+                <label className="text-xs font-medium text-slate-600">
+                  Opis ogłoszenia <span className="text-slate-400 font-normal">(opcjonalnie — wklej treść ze strony ogłoszenia)</span>
+                </label>
+                <textarea
+                  className="w-full h-28 text-sm rounded-md border border-blue-200 bg-white px-3 py-2 resize-y focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 placeholder:text-slate-400"
+                  placeholder={isFbUrl
+                    ? "Wklej tutaj treść ogłoszenia z Facebook (tytuł, opis, cena, lokalizacja)..."
+                    : "Wklej tutaj treść ogłoszenia jeśli strona nie dała się automatycznie odczytać..."
+                  }
+                  value={submitDescription}
+                  onChange={e => setSubmitDescription(e.target.value)}
+                  disabled={isSubmitting}
+                />
+                <p className="text-xs text-slate-400">
+                  AI użyje tego opisu jako główne źródło danych. Im więcej szczegółów (cena, lokalizacja, rozmiar, media), tym dokładniejsza ekstrakcja.
+                </p>
+              </div>
+            )}
+
+            {!showDescriptionField && (
+              <p className="text-xs text-blue-600/70 ml-[calc(7rem+12px)]">
+                AI automatycznie wyciągnie dane: województwo, powiat, gmina, miejscowość, rozmiar działki, media, przeznaczenie, zabudowania, cena
+              </p>
+            )}
           </CardContent>
         </Card>
 

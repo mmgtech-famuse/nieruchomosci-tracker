@@ -58,3 +58,13 @@
 - [x] Frontend: map pins always reflect current filtered set (all filters: top-bar + column + rating)
 - [x] Frontend: filter by minimum average rating (3+, 4+, 5 only)
 - [x] Tests: 12 tests passing (addRating, updateNotes, getRatingStats + existing tests)
+
+## FB Description Field, Duplicate Detection & Alerts
+- [ ] Backend: accept optional `description` text in submitUrl alongside URL
+- [ ] Backend: use description as primary AI content source when provided
+- [ ] Backend: duplicate detection — check URL exists before extraction, return special error with existing listing ID
+- [ ] Backend: incomplete data flag — if ≥4 key fields are empty/brak danych, return warning with partial data
+- [ ] Frontend: expandable "Opis ogłoszenia" textarea (collapsed by default, toggle with "+ Dodaj opis")
+- [ ] Frontend: auto-detect Facebook/Instagram URLs and show inline hint before submission
+- [ ] Frontend: on duplicate URL — toast with link to existing row + auto-scroll and highlight that row
+- [ ] Frontend: on incomplete data — persistent warning toast suggesting to paste description text

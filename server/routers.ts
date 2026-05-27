@@ -201,25 +201,42 @@ export const appRouter = router({
       }),
 
     submitUrl: publicProcedure
-      .input(z.object({ url: z.string().url("Podaj poprawny URL") }))
+      .input(z.object({
+        url: z.string().url("Podaj poprawny URL"),
+        description: z.string().max(8000).optional(),
+      }))
       .mutation(async ({ input }) => {
         const { invokeLLM } = await import("./_core/llm");
         const { makeRequest } = await import("./_core/map");
-        const { insertListing } = await import("./db");
+        const { insertListing, getAllListings } = await import("./db");
 
-        const isFacebook = input.url.includes("facebook.com");
+        // ── Step 0: Duplicate detection ─────────────────────────────────────
+        const allExisting = await getAllListings();
+        const normalizeUrl = (u: string) => u.trim().replace(/\/$/, "").toLowerCase();
+        const duplicate = allExisting.find(l => normalizeUrl(l.url) === normalizeUrl(input.url));
+        if (duplicate) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `DUPLICATE:${duplicate.id}`,
+          });
+        }
+
+        const isFacebook = input.url.includes("facebook.com") || input.url.includes("fb.com");
+        const hasUserDescription = !!(input.description && input.description.trim().length > 30);
 
         // ── Step 1: Fetch page content ──────────────────────────────────────
         let pageText: string | null = null;
         let extraMeta = "";
         let fetchSuccess = false;
 
-        if (!isFacebook) {
+        if (hasUserDescription) {
+          // User provided description — use it as primary content
+          pageText = input.description!.trim();
+          fetchSuccess = true;
+        } else if (!isFacebook) {
           const html = await fetchPage(input.url);
           if (html) {
-            // Extract OLX/Otodom specific structured data first
             extraMeta = extractOlxData(html);
-            // Strip HTML for LLM context
             pageText = stripHtml(html, 10000);
             fetchSuccess = pageText.length > 200;
             if (!fetchSuccess) pageText = null;
@@ -238,7 +255,25 @@ export const appRouter = router({
         }
 
         // ── Step 2: AI extraction ───────────────────────────────────────────
-        const extractionPrompt = buildPrompt(input.url, pageText, extraMeta);
+        // If user provided description, build a richer prompt
+        let extractionPrompt: string;
+        if (hasUserDescription) {
+          const FIELDS_DESC = `Zwróć TYLKO poprawny obiekt JSON z tymi polami:
+{
+  "wojewodztwo": "nazwa województwa małymi literami (np. 'mazowieckie') lub '-' jeśli nieznane",
+  "powiat": "nazwa powiatu małymi literami lub '-'",
+  "gmina": "nazwa gminy lub '-'",
+  "miejscowosc": "nazwa miejscowości lub '-'",
+  "rozmiarDzialki": "rozmiar działki z jednostką (np. '1500 m²', '0.5 ha') lub '-'",
+  "media": "dostępne media oddzielone przecinkami lub '-'",
+  "przeznaczenie": "tagi z listy: budowlana, rolna, siedliskowa, leśna, rekreacyjna, WZ, inne/brak danych",
+  "zabudowania": "opis zabudowań lub '-'",
+  "cena": "cena w formacie '250 000 zł' lub '-'"
+}`;
+          extractionPrompt = `Jesteś ekspertem od polskich ogłoszeń nieruchomości. Przeanalizuj poniższy opis ogłoszenia wklejony przez użytkownika i wyciągnij dane.\n\nURL ogłoszenia: ${input.url}\n\nOPIS OGŁOSZENIA:\n${pageText}\n\n${FIELDS_DESC}\n\nWSKAZÓWKI:\n- Szukaj ceny w formacie "XXX 000 zł" lub "XXX000 PLN"\n- Województwo zawsze małymi literami\n- Rozmiar działki: zachowaj jednostkę (m², ha, ar)\n- Przeznaczenie: szukaj słów kluczowych budowlana/rolna/siedliskowa/leśna/rekreacyjna/letniskowa/WZ`;
+        } else {
+          extractionPrompt = buildPrompt(input.url, pageText, extraMeta);
+        }
 
         let extracted: Record<string, string> = {};
         try {
@@ -342,12 +377,20 @@ export const appRouter = router({
           longitude: longitude ?? undefined,
         });
 
+        // ── Step 6: Detect incomplete data ──────────────────────────────────
+        const KEY_FIELDS = [woj, pow, gmi, mie, roz, cen];
+        const emptyCount = KEY_FIELDS.filter(f => !f || f === "-").length;
+        const incompleteData = emptyCount >= 4; // 4+ key fields missing
+
         return {
           ...newListing,
           _meta: {
             fetchSuccess,
             geocoded: !!(latitude && longitude),
             isFacebook,
+            incompleteData,
+            emptyCount,
+            hasUserDescription,
           },
         };
       }),
