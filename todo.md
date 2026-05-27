@@ -40,3 +40,11 @@
 - [x] Normalize all existing przeznaczenie values in DB to fixed categories
 - [x] Update AI extraction prompt to always return one of the fixed categories
 - [x] Update filter dropdown to show fixed categories (ordered, only present categories shown)
+
+## Legal Category Reclassification
+- [x] Redefine przeznaczenie categories to legal Polish types: budowlana, rolna, siedliskowa, leśna, rekreacyjna, WZ, inne/brak danych — multi-value tags allowed
+- [x] Re-normalize all existing DB entries to new categories
+- [x] Update AI extraction prompt for new legal categories (main + fallback)
+- [x] Update server-side normalization guard with legal tag detection
+- [x] Update filter dropdown with new categories (tag-based contains matching)
+- [x] Fix sticky scrollbar for table (mirror scrollbar sticky at bottom of viewport)

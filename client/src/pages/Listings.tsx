@@ -169,6 +169,8 @@ export default function Listings() {
   // Table refs
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const tableContainerRef = useRef<HTMLDivElement>(null);
+  const mirrorScrollRef = useRef<HTMLDivElement>(null);
+  const mirrorInnerRef = useRef<HTMLDivElement>(null);
 
   // Data
   const { data: allListings = [], isLoading, refetch } = trpc.listings.getAll.useQuery();
@@ -180,20 +182,21 @@ export default function Listings() {
     () => Array.from(new Set(allListings.map(l => l.wojewodztwo).filter(v => v && v !== "-"))).sort((a, b) => a.localeCompare(b, "pl")),
     [allListings]
   );
-  // Fixed przeznaczenie categories — always shown in this order
+  // Legal Polish land categories — fixed order, multi-value tags allowed (comma-separated)
   const PRZEZNACZENIE_CATEGORIES = [
     'budowlana',
-    'rekreacyjna/letniskowa',
-    'mieszkaniowa',
-    'siedliskowa',
     'rolna',
-    'rolno-budowlana',
-    'mieszana/inne',
-    'brak danych',
+    'siedliskowa',
+    'leśna',
+    'rekreacyjna',
+    'WZ',
+    'inne/brak danych',
   ];
-  // Only show categories that actually exist in current data
+  // Only show categories that actually appear in current data (tag-based: a listing with 'rolna, WZ' matches both)
   const uniquePrz = useMemo(
-    () => PRZEZNACZENIE_CATEGORIES.filter(cat => allListings.some(l => l.przeznaczenie === cat)),
+    () => PRZEZNACZENIE_CATEGORIES.filter(cat =>
+      allListings.some(l => l.przeznaczenie?.toLowerCase().includes(cat.toLowerCase()))
+    ),
     [allListings]
   );
 
@@ -201,7 +204,7 @@ export default function Listings() {
   const filtered = useMemo(() => {
     let items = allListings.filter(l => {
       if (filterWoj && l.wojewodztwo !== filterWoj) return false;
-      if (filterPrz && l.przeznaczenie !== filterPrz) return false;
+      if (filterPrz && !l.przeznaczenie?.toLowerCase().includes(filterPrz.toLowerCase())) return false;
       if (search) {
         const q = search.toLowerCase();
         return (
@@ -233,6 +236,36 @@ export default function Listings() {
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // ── Mirror scrollbar sync ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const table = tableContainerRef.current;
+    const mirror = mirrorScrollRef.current;
+    const inner = mirrorInnerRef.current;
+    if (!table || !mirror || !inner) return;
+
+    // Set inner width to match table scroll width
+    const updateWidth = () => {
+      inner.style.width = table.scrollWidth + 'px';
+    };
+    updateWidth();
+
+    // Sync: table → mirror
+    const onTableScroll = () => { mirror.scrollLeft = table.scrollLeft; };
+    // Sync: mirror → table
+    const onMirrorScroll = () => { table.scrollLeft = mirror.scrollLeft; };
+
+    table.addEventListener('scroll', onTableScroll);
+    mirror.addEventListener('scroll', onMirrorScroll);
+
+    // Update width on window resize
+    window.addEventListener('resize', updateWidth);
+    return () => {
+      table.removeEventListener('scroll', onTableScroll);
+      mirror.removeEventListener('scroll', onMirrorScroll);
+      window.removeEventListener('resize', updateWidth);
+    };
   }, []);
 
   // ── Map: create/update markers ─────────────────────────────────────────────
@@ -816,6 +849,21 @@ export default function Listings() {
                   )}
                 </tbody>
               </table>
+            </div>
+            {/* ── Sticky mirror scrollbar ── always visible at bottom of viewport ── */}
+            <div
+              ref={mirrorScrollRef}
+              className="overflow-x-auto"
+              style={{
+                position: 'sticky',
+                bottom: 0,
+                zIndex: 20,
+                background: 'white',
+                borderTop: '1px solid #e2e8f0',
+                height: '14px',
+              }}
+            >
+              <div ref={mirrorInnerRef} style={{ height: '1px' }} />
             </div>
           </CardContent>
         </Card>

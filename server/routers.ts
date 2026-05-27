@@ -89,14 +89,14 @@ Zwróć TYLKO poprawny obiekt JSON z tymi polami:
   "miejscowosc": "nazwa miejscowości lub '-'",
   "rozmiarDzialki": "rozmiar działki z jednostką (np. '1500 m²', '0.5 ha') lub '-'",
   "media": "dostępne media oddzielone przecinkami (np. 'prąd, woda, gaz') lub '-'",
-  "przeznaczenie": "Wybierz DOKŁADNIE jedną z poniższych kategorii (bez modyfikacji):\n- budowlana\n- rekreacyjna/letniskowa\n- mieszkaniowa\n- siedliskowa\n- rolna\n- rolno-budowlana\n- mieszana/inne\n- brak danych\n\nZasady dopasowania:\n'budowlana' → działka z pozwoleniem/przeznaczeniem pod zabudowę mieszkaniową lub usługową\n'rekreacyjna/letniskowa' → rekreacyjna, letniskowa, wypoczynkowa, turystyczna\n'mieszkaniowa' → mieszkaniowa jednorodzinna (MN), mieszkaniowa wielorodzinna\n'siedliskowa' → siedliskowa, siedlisko, zagrodowa\n'rolna' → rolna, rolno-leśna, leśna, rolna z WZ\n'rolno-budowlana' → rolno-budowlana, rolna z możliwością zabudowy\n'mieszana/inne' → kilka przeznaczeń jednocześnie (np. budowlana/rekreacyjna), lub inne niepasujące\n'brak danych' → brak informacji w ogłoszeniu",
+  "przeznaczenie": "Podaj przeznaczenie działki jako LISTĘ TAGÓW oddzielonych przecinkiem. Używaj WYŁĄCZNIE tych tagów (możesz łączyć kilka):\n- budowlana (B): przeznaczona pod zabudowę mieszkaniową, usługową lub przemysłową\n- rolna (R): działalność rolnicza, wymaga odrolnienia przed budową\n- siedliskowa (S): część działki rolnej pod zabudowę zagrodową dla rolnika\n- leśna (L): pokryta lasem lub przeznaczona na cele leśne\n- rekreacyjna: wypoczynek, letniskowa, turystyczna\n- WZ: działka z wydanymi warunkami zabudowy\n- inne/brak danych: gdy brak informacji lub nie pasuje do żadnej kategorii\n\nPrzykłady:\n- działka rolna z WZ → 'rolna, WZ'\n- rolno-budowlana → 'rolna, budowlana'\n- siedliskowa z lasem → 'siedliskowa, leśna'\n- brak info → 'inne/brak danych'",
   "zabudowania": "opis zabudowań lub '-'",
   "cena": "cena w formacie '250 000 zł' lub '-' jeśli brak"
 }`
           : `Przeanalizuj URL ogłoszenia nieruchomości i wyciągnij co możesz z samego linku.
 URL: ${input.url}
 Zwróć obiekt JSON z polami: wojewodztwo, powiat, gmina, miejscowosc, rozmiarDzialki, media, przeznaczenie, zabudowania, cena.
-Dla pola przeznaczenie użyj TYLKO jednej z kategorii: budowlana, rekreacyjna/letniskowa, mieszkaniowa, siedliskowa, rolna, rolno-budowlana, mieszana/inne, brak danych.
+Dla pola przeznaczenie użyj tagów oddzielonych przecinkiem spośród: budowlana, rolna, siedliskowa, leśna, rekreacyjna, WZ, inne/brak danych. Możesz łączyć kilka (np. "rolna, WZ").
 Dla pozostałych pól użyj '-' jeśli nie możesz określić.`;
 
         let extracted: Record<string, string> = {};
@@ -182,31 +182,32 @@ Dla pozostałych pól użyj '-' jeśli nie możesz określić.`;
           }
         }
 
-        // ── Step 3b: Normalize przeznaczenie to fixed categories ──────────────────
-        const FIXED_CATS = ['budowlana','rekreacyjna/letniskowa','mieszkaniowa','siedliskowa','rolna','rolno-budowlana','mieszana/inne','brak danych'];
+        // ── Step 3b: Normalize przeznaczenie to legal Polish land categories ──────────
+        // Allowed tags: budowlana, rolna, siedliskowa, leśna, rekreacyjna, WZ, inne/brak danych
+        // Multi-value allowed (comma-separated), e.g. "rolna, WZ" or "rolna, budowlana"
+        const LEGAL_TAGS = ['budowlana', 'rolna', 'siedliskowa', 'leśna', 'rekreacyjna', 'WZ', 'inne/brak danych'];
         const rawP = (extracted.przeznaczenie || '').toLowerCase().trim();
-        let normP: string;
-        if (FIXED_CATS.includes(rawP)) {
-          normP = rawP;
-        } else if (!rawP || rawP === '-') {
-          normP = 'brak danych';
-        } else if (rawP.includes('rolno-budowlana') || (rawP.includes('rolna') && rawP.includes('budow'))) {
-          normP = 'rolno-budowlana';
-        } else if ((rawP.includes('budowlana') && rawP.includes('rekre')) || (rawP.includes('budowlana') && rawP.includes('mieszk'))) {
-          normP = 'mieszana/inne';
-        } else if (rawP.includes('budowlana')) {
-          normP = 'budowlana';
-        } else if (rawP.includes('rekre') || rawP.includes('letnisk') || rawP.includes('wypocz') || rawP.includes('turyst')) {
-          normP = 'rekreacyjna/letniskowa';
-        } else if (rawP.includes('mieszk')) {
-          normP = 'mieszkaniowa';
-        } else if (rawP.includes('siedlisk') || rawP.includes('zagroda')) {
-          normP = 'siedliskowa';
-        } else if (rawP.includes('rolna') || rawP.includes('rolno') || rawP.includes('leśna')) {
-          normP = 'rolna';
-        } else {
-          normP = 'mieszana/inne';
-        }
+        const normalizePrzeznaczenie = (raw: string): string => {
+          if (!raw || raw === '-') return 'inne/brak danych';
+          const tags: string[] = [];
+          // Check for WZ (warunki zabudowy)
+          if (raw.includes('wz') || raw.includes('warunki zabudowy') || raw.includes('warunki') ) tags.push('WZ');
+          // Check for budowlana
+          if (raw.includes('budowlana') || raw.includes('budowl') || raw.includes('mieszkaniowa') || raw.includes('usługowa') || raw.includes('przemysłowa')) tags.push('budowlana');
+          // Check for siedliskowa
+          if (raw.includes('siedlisk') || raw.includes('zagroda') || raw.includes('zagrodowa')) tags.push('siedliskowa');
+          // Check for leśna
+          if (raw.includes('leśna') || raw.includes('lesna') || raw.includes('las')) tags.push('leśna');
+          // Check for rekreacyjna
+          if (raw.includes('rekre') || raw.includes('letnisk') || raw.includes('wypocz') || raw.includes('turyst')) tags.push('rekreacyjna');
+          // Check for rolna (after siedliskowa/leśna to avoid double-counting)
+          if (raw.includes('rolna') || raw.includes('rolno') || raw.includes('rolnicza')) tags.push('rolna');
+          // If nothing matched → inne/brak danych
+          if (tags.length === 0) return 'inne/brak danych';
+          // Deduplicate and join
+          return Array.from(new Set(tags)).join(', ');
+        };
+        const normP = normalizePrzeznaczenie(rawP);
 
         // ── Step 4: Save to DB ──────────────────────────────────────────────
         const newListing = await insertListing({
