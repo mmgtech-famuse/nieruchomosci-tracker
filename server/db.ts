@@ -1,4 +1,4 @@
-import { and, asc, eq, like, or } from "drizzle-orm";
+import { and, asc, eq, like, max, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertListing, InsertUser, listings, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -90,9 +90,13 @@ export async function getListingsByFilters(filters: {
 export async function insertListing(data: Omit<InsertListing, "id">) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(listings).values(data);
-  const insertId = (result[0] as any).insertId as number;
-  const rows = await db.select().from(listings).where(eq(listings.id, insertId)).limit(1);
+
+  // Compute next sequential ID: MAX(id) + 1 (avoids auto_increment gaps)
+  const maxResult = await db.select({ maxId: max(listings.id) }).from(listings);
+  const nextId = (maxResult[0]?.maxId ?? 0) + 1;
+
+  await db.insert(listings).values({ ...data, id: nextId });
+  const rows = await db.select().from(listings).where(eq(listings.id, nextId)).limit(1);
   return rows[0];
 }
 
