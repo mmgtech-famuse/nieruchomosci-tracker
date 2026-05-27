@@ -1,6 +1,6 @@
-import { and, asc, eq, like, max, or, sql } from "drizzle-orm";
+import { and, asc, avg, count, eq, like, max, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertListing, InsertUser, listings, users } from "../drizzle/schema";
+import { InsertListing, InsertUser, listings, ratings, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -104,6 +104,8 @@ export async function deleteListing(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(listings).where(eq(listings.id, id));
+  // Also delete associated ratings
+  await db.delete(ratings).where(eq(ratings.listingId, id));
   return { success: true };
 }
 
@@ -112,4 +114,45 @@ export async function getListingById(id: number) {
   if (!db) return undefined;
   const rows = await db.select().from(listings).where(eq(listings.id, id)).limit(1);
   return rows[0];
+}
+
+export async function updateListingNotes(id: number, notes: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(listings).set({ notes }).where(eq(listings.id, id));
+  return { success: true };
+}
+
+// ─── Ratings ──────────────────────────────────────────────────────────────────
+
+/** Add a rating (1–5) for a listing. Anonymous — no user tracking. */
+export async function addRating(listingId: number, score: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (score < 1 || score > 5) throw new Error("Score must be 1–5");
+  await db.insert(ratings).values({ listingId, score });
+  return { success: true };
+}
+
+/** Get average score and vote count per listing */
+export async function getRatingStats(): Promise<Record<number, { avg: number; count: number }>> {
+  const db = await getDb();
+  if (!db) return {};
+  const rows = await db
+    .select({
+      listingId: ratings.listingId,
+      avgScore: avg(ratings.score),
+      voteCount: count(ratings.id),
+    })
+    .from(ratings)
+    .groupBy(ratings.listingId);
+
+  const result: Record<number, { avg: number; count: number }> = {};
+  for (const row of rows) {
+    result[row.listingId] = {
+      avg: parseFloat(String(row.avgScore ?? 0)),
+      count: Number(row.voteCount),
+    };
+  }
+  return result;
 }

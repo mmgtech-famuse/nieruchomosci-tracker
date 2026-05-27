@@ -240,6 +240,31 @@ Dla pozostałych pól użyj '-' jeśli nie możesz określić.`;
         const { deleteListing } = await import("./db");
         return deleteListing(input.id);
       }),
+
+    updateNotes: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        notes: z.string().max(2000),
+      }))
+      .mutation(async ({ input }) => {
+        const { updateListingNotes } = await import("./db");
+        return updateListingNotes(input.id, input.notes);
+      }),
+
+    addRating: publicProcedure
+      .input(z.object({
+        listingId: z.number().int().positive(),
+        score: z.number().int().min(1).max(5),
+      }))
+      .mutation(async ({ input }) => {
+        const { addRating } = await import("./db");
+        return addRating(input.listingId, input.score);
+      }),
+
+    getRatingStats: publicProcedure.query(async () => {
+      const { getRatingStats } = await import("./db");
+      return getRatingStats();
+    }),
   }),
 });
 

@@ -1,4 +1,4 @@
-import { decimal, index, int, mysqlEnum, mysqlTable, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { decimal, float, index, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -31,6 +31,7 @@ export const listings = mysqlTable(
     cena: varchar("cena", { length: 128 }).notNull().default("-"),
     latitude: decimal("latitude", { precision: 10, scale: 7 }),
     longitude: decimal("longitude", { precision: 11, scale: 7 }),
+    notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
@@ -42,3 +43,20 @@ export const listings = mysqlTable(
 
 export type Listing = typeof listings.$inferSelect;
 export type InsertListing = typeof listings.$inferInsert;
+
+// Ratings: one row per vote (anonymous, no user tracking)
+export const ratings = mysqlTable(
+  "ratings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    listingId: int("listingId").notNull(),
+    score: int("score").notNull(), // 1–5
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    listingIdIdx: index("listingIdIdx").on(table.listingId),
+  })
+);
+
+export type Rating = typeof ratings.$inferSelect;
+export type InsertRating = typeof ratings.$inferInsert;

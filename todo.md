@@ -48,3 +48,13 @@
 - [x] Update server-side normalization guard with legal tag detection
 - [x] Update filter dropdown with new categories (tag-based contains matching)
 - [x] Fix sticky scrollbar for table (mirror scrollbar sticky at bottom of viewport)
+
+## Ratings, Notes & Column Filters
+- [x] DB: add `ratings` table (listingId, score 1-5, createdAt) and `notes` column on listings
+- [x] Backend: addRating, getRatingStats, updateNotes procedures
+- [x] Frontend: star rating widget (1-5 stars) in table row + avg score display + sort by rating
+- [x] Frontend: editable notes cell per listing (click to edit, blur/Ctrl+Enter to save)
+- [x] Frontend: per-column filter row (text inputs + select dropdowns for all filterable columns)
+- [x] Frontend: map pins always reflect current filtered set (all filters: top-bar + column + rating)
+- [x] Frontend: filter by minimum average rating (3+, 4+, 5 only)
+- [x] Tests: 12 tests passing (addRating, updateNotes, getRatingStats + existing tests)

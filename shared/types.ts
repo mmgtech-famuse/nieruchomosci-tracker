@@ -14,6 +14,9 @@ export interface Listing {
   cena: string;
   latitude: string | null;
   longitude: string | null;
+  notes: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+export type RatingStats = Record<number, { avg: number; count: number }>;

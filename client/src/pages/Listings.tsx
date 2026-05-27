@@ -16,10 +16,11 @@ import {
   MapPin,
   Plus,
   Search,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
-import type { Listing } from "@shared/types";
+import type { Listing, RatingStats } from "@shared/types";
 
 // ─── Price helpers ──────────────────────────────────────────────────────────
 
@@ -47,112 +48,181 @@ function getPriceTier(cena: string): "green" | "yellow" | "orange" | "unknown" {
   return "orange";
 }
 
-/** Returns subtle row background tint + left border color based on price tier */
 function getRowTint(cena: string, isSelected: boolean, isHovered: boolean): React.CSSProperties {
   const tier = getPriceTier(cena);
   if (isSelected) {
-    // Strong highlight when selected (click from map or table)
-    const borderColors: Record<string, string> = {
-      green: "#16a34a",
-      yellow: "#ca8a04",
-      orange: "#ea580c",
-      unknown: "#64748b",
-    };
-    return {
-      backgroundColor: "#dbeafe",
-      borderLeft: `4px solid ${borderColors[tier]}`,
-      outline: "none",
-    };
+    const borderColors: Record<string, string> = { green: "#16a34a", yellow: "#ca8a04", orange: "#ea580c", unknown: "#64748b" };
+    return { backgroundColor: "#dbeafe", borderLeft: `4px solid ${borderColors[tier]}`, outline: "none" };
   }
   if (isHovered) {
-    const bgColors: Record<string, string> = {
-      green: "#f0fdf4",
-      yellow: "#fefce8",
-      orange: "#fff7ed",
-      unknown: "#f8fafc",
-    };
-    return {
-      backgroundColor: bgColors[tier],
-      borderLeft: `4px solid ${getPriceColor(cena)}44`,
-    };
+    const bgColors: Record<string, string> = { green: "#f0fdf4", yellow: "#fefce8", orange: "#fff7ed", unknown: "#f8fafc" };
+    return { backgroundColor: bgColors[tier], borderLeft: `4px solid ${getPriceColor(cena)}44` };
   }
-  // Resting state: very subtle tint
-  const restBg: Record<string, string> = {
-    green: "#f0fdf480",
-    yellow: "#fefce880",
-    orange: "#fff7ed80",
-    unknown: "transparent",
-  };
-  return {
-    backgroundColor: restBg[tier],
-    borderLeft: `4px solid ${getPriceColor(cena)}22`,
-  };
+  const restBg: Record<string, string> = { green: "#f0fdf480", yellow: "#fefce880", orange: "#fff7ed80", unknown: "transparent" };
+  return { backgroundColor: restBg[tier], borderLeft: `4px solid ${getPriceColor(cena)}22` };
 }
 
 // ─── Sort helpers ────────────────────────────────────────────────────────────
 
-type SortKey = keyof Listing | null;
+type SortKey = keyof Listing | "avgRating" | null;
 type SortDir = "asc" | "desc";
 
-function sortListings(items: Listing[], key: SortKey, dir: SortDir): Listing[] {
+function sortListings(items: Listing[], key: SortKey, dir: SortDir, ratingStats: RatingStats): Listing[] {
   if (!key) return items;
   return [...items].sort((a, b) => {
-    let av: string | number = String(a[key] ?? "");
-    let bv: string | number = String(b[key] ?? "");
+    let av: string | number = "";
+    let bv: string | number = "";
     if (key === "id") { av = a.id; bv = b.id; }
-    else if (key === "cena") {
-      av = parsePricePLN(a.cena) ?? -1;
-      bv = parsePricePLN(b.cena) ?? -1;
-    }
-    if (typeof av === "number" && typeof bv === "number") {
-      return dir === "asc" ? av - bv : bv - av;
-    }
-    return dir === "asc"
-      ? String(av).localeCompare(String(bv), "pl")
-      : String(bv).localeCompare(String(av), "pl");
+    else if (key === "cena") { av = parsePricePLN(a.cena) ?? -1; bv = parsePricePLN(b.cena) ?? -1; }
+    else if (key === "avgRating") { av = ratingStats[a.id]?.avg ?? 0; bv = ratingStats[b.id]?.avg ?? 0; }
+    else { av = String((a as unknown as Record<string, unknown>)[key] ?? ""); bv = String((b as unknown as Record<string, unknown>)[key] ?? ""); }
+    if (typeof av === "number" && typeof bv === "number") return dir === "asc" ? av - bv : bv - av;
+    return dir === "asc" ? String(av).localeCompare(String(bv), "pl") : String(bv).localeCompare(String(av), "pl");
   });
 }
 
-// ─── Column config ───────────────────────────────────────────────────────────
+// ─── Star Rating Component ────────────────────────────────────────────────────
 
-const COLUMNS: {
-  key: keyof Listing;
-  label: string;
-  sortable?: boolean;
-  minW?: string;
-  maxW?: string;
-  wrap?: boolean;
-  sticky?: "left" | "right";
-  stickyOffset?: number;
-}[] = [
-  { key: "id",            label: "ID",              sortable: true,  minW: "44px",  maxW: "52px",  sticky: "left",  stickyOffset: 0 },
-  { key: "url",           label: "URL",                              minW: "52px",  maxW: "60px" },
-  { key: "wojewodztwo",   label: "Województwo",     sortable: true,  minW: "110px", maxW: "150px" },
-  { key: "powiat",        label: "Powiat",           sortable: true,  minW: "100px", maxW: "140px" },
-  { key: "gmina",         label: "Gmina",            sortable: true,  minW: "100px", maxW: "140px" },
-  { key: "miejscowosc",   label: "Miejscowość",      sortable: true,  minW: "100px", maxW: "150px" },
-  { key: "rozmiarDzialki",label: "Rozmiar działki",  sortable: true,  minW: "100px", maxW: "130px" },
-  { key: "media",         label: "Media",                            minW: "140px", maxW: "220px", wrap: true },
-  { key: "przeznaczenie", label: "Przeznaczenie",    sortable: true,  minW: "100px", maxW: "160px" },
-  { key: "zabudowania",   label: "Zabudowania",                      minW: "160px", maxW: "260px", wrap: true },
-  { key: "cena",          label: "Cena",             sortable: true,  minW: "90px",  maxW: "120px", sticky: "right", stickyOffset: 36 },
+function StarRating({
+  listingId,
+  stats,
+  onRate,
+}: {
+  listingId: number;
+  stats?: { avg: number; count: number };
+  onRate: (listingId: number, score: number) => void;
+}) {
+  const [hover, setHover] = useState(0);
+  const avg = stats?.avg ?? 0;
+  const count = stats?.count ?? 0;
+  const displayScore = hover || Math.round(avg);
+
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <div className="flex items-center gap-0.5">
+        {[1, 2, 3, 4, 5].map(star => (
+          <button
+            key={star}
+            className="p-0 leading-none transition-transform hover:scale-110 active:scale-95"
+            onMouseEnter={() => setHover(star)}
+            onMouseLeave={() => setHover(0)}
+            onClick={e => { e.stopPropagation(); onRate(listingId, star); }}
+            title={`Oceń ${star}/5`}
+          >
+            <Star
+              className="w-3.5 h-3.5"
+              fill={star <= displayScore ? (hover ? "#f59e0b" : "#f59e0b") : "none"}
+              stroke={star <= displayScore ? "#f59e0b" : "#cbd5e1"}
+            />
+          </button>
+        ))}
+      </div>
+      {count > 0 && (
+        <span className="text-[10px] text-slate-400 leading-none">
+          {avg.toFixed(1)} ({count})
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── Notes Cell Component ─────────────────────────────────────────────────────
+
+function NotesCell({
+  listingId,
+  notes,
+  onSave,
+}: {
+  listingId: number;
+  notes: string | null;
+  onSave: (listingId: number, notes: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(notes ?? "");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => { setValue(notes ?? ""); }, [notes]);
+
+  const handleSave = () => {
+    setEditing(false);
+    if (value !== (notes ?? "")) onSave(listingId, value);
+  };
+
+  if (editing) {
+    return (
+      <textarea
+        ref={textareaRef}
+        autoFocus
+        className="w-full text-xs border border-blue-300 rounded p-1 resize-none bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+        rows={3}
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={e => { if (e.key === "Escape") { setValue(notes ?? ""); setEditing(false); } if (e.key === "Enter" && e.ctrlKey) handleSave(); }}
+        onClick={e => e.stopPropagation()}
+        style={{ minWidth: "160px" }}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="text-xs text-slate-500 cursor-text hover:text-slate-700 hover:bg-slate-50 rounded px-1 py-0.5 min-h-[20px] transition-colors"
+      style={{ whiteSpace: "pre-wrap", lineHeight: "1.4", minWidth: "100px" }}
+      onClick={e => { e.stopPropagation(); setEditing(true); }}
+      title="Kliknij aby edytować notatkę"
+    >
+      {value || <span className="text-slate-300 italic">+ dodaj notatkę</span>}
+    </div>
+  );
+}
+
+// ─── Fixed categories ─────────────────────────────────────────────────────────
+
+const PRZEZNACZENIE_CATEGORIES = [
+  "budowlana", "rolna", "siedliskowa", "leśna", "rekreacyjna", "WZ", "inne/brak danych",
 ];
+
+// ─── Synonym map for search ───────────────────────────────────────────────────
+
+const SYNONYMS: Record<string, string[]> = {
+  budowlana: ["budowlana", "budowl", "mieszkaniowa", "mn", "usługowa"],
+  budowlane: ["budowlana", "budowl"],
+  rolna: ["rolna", "rolno", "rolnicza", "rolne"],
+  rolne: ["rolna", "rolno"],
+  siedliskowa: ["siedlisk", "zagroda"],
+  leśna: ["leśna", "lesna", "las"],
+  lesna: ["leśna", "lesna"],
+  rekreacyjna: ["rekre", "letnisk", "wypocz", "turyst"],
+  letniskowa: ["letnisk", "rekre"],
+  wz: ["wz", "warunki zabudowy"],
+  warunki: ["wz", "warunki"],
+  prąd: ["prąd", "energia", "elektryczność", "energetyczny"],
+  woda: ["woda", "wodociąg", "wodociągowa", "studnia"],
+  gaz: ["gaz", "gazowy", "gazociąg"],
+  kanalizacja: ["kanalizacja", "szambo", "szambem"],
+  dom: ["dom", "budynek", "zabudow"],
+};
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function Listings() {
   const utils = trpc.useUtils();
 
-  // Filters
+  // Global filters (top bar)
   const [filterWoj, setFilterWoj] = useState("");
   const [filterPrz, setFilterPrz] = useState("");
   const [search, setSearch] = useState("");
+
+  // Column-level filters (per-column header inputs)
+  const [colFilters, setColFilters] = useState<Record<string, string>>({});
+  const [minRating, setMinRating] = useState(0); // 0 = no filter
 
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>("id");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  // Selection: hoveredId is transient (mouse), selectedId is persistent (click)
+  // Selection
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
@@ -168,88 +238,75 @@ export default function Listings() {
 
   // Table refs
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
-  const tableContainerRef = useRef<HTMLDivElement>(null); // click-outside wrapper (whole Card)
-  const tableScrollRef = useRef<HTMLDivElement>(null);    // overflow-x-auto scroll container
+  const tableContainerRef = useRef<HTMLDivElement>(null); // click-outside wrapper
+  const tableScrollRef = useRef<HTMLDivElement>(null);    // overflow-x-auto
   const mirrorScrollRef = useRef<HTMLDivElement>(null);
   const mirrorInnerRef = useRef<HTMLDivElement>(null);
-  const [showScrollbar, setShowScrollbar] = useState(false); // fixed scrollbar visibility
+  const [showScrollbar, setShowScrollbar] = useState(false);
 
   // Data
   const { data: allListings = [], isLoading, refetch } = trpc.listings.getAll.useQuery();
+  const { data: ratingStats = {}, refetch: refetchRatings } = trpc.listings.getRatingStats.useQuery();
   const submitMutation = trpc.listings.submitUrl.useMutation();
   const deleteMutation = trpc.listings.delete.useMutation();
+  const updateNotesMutation = trpc.listings.updateNotes.useMutation();
+  const addRatingMutation = trpc.listings.addRating.useMutation();
 
   // Derived: unique filter values
   const uniqueWoj = useMemo(
     () => Array.from(new Set(allListings.map(l => l.wojewodztwo).filter(v => v && v !== "-"))).sort((a, b) => a.localeCompare(b, "pl")),
     [allListings]
   );
-  // Legal Polish land categories — fixed order, multi-value tags allowed (comma-separated)
-  const PRZEZNACZENIE_CATEGORIES = [
-    'budowlana',
-    'rolna',
-    'siedliskowa',
-    'leśna',
-    'rekreacyjna',
-    'WZ',
-    'inne/brak danych',
-  ];
-  // Only show categories that actually appear in current data (tag-based: a listing with 'rolna, WZ' matches both)
   const uniquePrz = useMemo(
-    () => PRZEZNACZENIE_CATEGORIES.filter(cat =>
-      allListings.some(l => l.przeznaczenie?.toLowerCase().includes(cat.toLowerCase()))
-    ),
+    () => PRZEZNACZENIE_CATEGORIES.filter(cat => allListings.some(l => l.przeznaczenie?.toLowerCase().includes(cat.toLowerCase()))),
     [allListings]
   );
-
-  // Synonym map for search — maps user input to related terms
-  const SYNONYMS: Record<string, string[]> = {
-    'budowlana': ['budowlana', 'budowl', 'mieszkaniowa', 'mn', 'usługowa', 'przemysłowa'],
-    'budowlane': ['budowlana', 'budowl'],
-    'rolna': ['rolna', 'rolno', 'rolnicza', 'rolne'],
-    'rolne': ['rolna', 'rolno'],
-    'siedliskowa': ['siedlisk', 'zagroda'],
-    'siedliskowe': ['siedlisk'],
-    'leśna': ['leśna', 'lesna', 'las'],
-    'lesna': ['leśna', 'lesna'],
-    'leśne': ['leśna', 'lesna'],
-    'rekreacyjna': ['rekre', 'letnisk', 'wypocz', 'turyst'],
-    'rekreacyjne': ['rekre', 'letnisk'],
-    'letniskowa': ['letnisk', 'rekre'],
-    'wz': ['wz', 'warunki zabudowy'],
-    'warunki': ['wz', 'warunki'],
-    'prąd': ['prąd', 'energia', 'elektryczność', 'energetyczny'],
-    'woda': ['woda', 'wodociąg', 'wodociągowa', 'studnia'],
-    'gaz': ['gaz', 'gazowy', 'gazociąg'],
-    'kanalizacja': ['kanalizacja', 'szambo', 'szambem', 'szambowa'],
-    'dom': ['dom', 'budynek', 'zabudow'],
-    'stodoła': ['stodoła', 'stodołą', 'stodoły'],
-    'tani': ['do 300', '200 000', '150 000', '100 000'],
-    'tanie': ['do 300', '200 000'],
-    'drogi': ['400 000', '500 000', '600 000'],
-  };
 
   // Filtered + sorted listings
   const filtered = useMemo(() => {
     let items = allListings.filter(l => {
+      // Top-bar filters
       if (filterWoj && l.wojewodztwo !== filterWoj) return false;
       if (filterPrz && !l.przeznaczenie?.toLowerCase().includes(filterPrz.toLowerCase())) return false;
       if (search) {
         const q = search.toLowerCase().trim();
-        // Expand query with synonyms
         const terms = [q, ...(SYNONYMS[q] || [])];
-        // Build full-text search string from all relevant fields
-        const haystack = [
-          l.miejscowosc, l.gmina, l.powiat, l.wojewodztwo,
-          l.przeznaczenie, l.media, l.zabudowania, l.rozmiarDzialki,
-          l.cena, String(l.id)
-        ].join(' ').toLowerCase();
-        return terms.some(term => haystack.includes(term));
+        const haystack = [l.miejscowosc, l.gmina, l.powiat, l.wojewodztwo, l.przeznaczenie, l.media, l.zabudowania, l.rozmiarDzialki, l.cena, String(l.id)].join(" ").toLowerCase();
+        if (!terms.some(t => haystack.includes(t))) return false;
+      }
+      // Column filters
+      for (const [col, val] of Object.entries(colFilters)) {
+        if (!val) continue;
+        const v = val.toLowerCase().trim();
+        const field = (l as unknown as Record<string, unknown>)[col];
+        if (col === "cena") {
+          // Support range like "100-300" or "< 300" or "> 200"
+          const price = parsePricePLN(l.cena);
+          if (v.includes("-")) {
+            const [lo, hi] = v.split("-").map(s => parseFloat(s.replace(/\s/g, "")) * 1000);
+            if (price === null || price < lo || price > hi) return false;
+          } else if (v.startsWith("<")) {
+            const hi = parseFloat(v.slice(1).trim()) * 1000;
+            if (price === null || price >= hi) return false;
+          } else if (v.startsWith(">")) {
+            const lo = parseFloat(v.slice(1).trim()) * 1000;
+            if (price === null || price <= lo) return false;
+          } else {
+            if (!String(l.cena).toLowerCase().includes(v)) return false;
+          }
+        } else {
+          if (!String(field ?? "").toLowerCase().includes(v)) return false;
+        }
+      }
+      // Min rating filter
+      if (minRating > 0) {
+        const avg = ratingStats[l.id]?.avg ?? 0;
+        if (avg < minRating) return false;
       }
       return true;
     });
-    return sortListings(items, sortKey, sortDir);
-  }, [allListings, filterWoj, filterPrz, search, sortKey, sortDir]);
+    return sortListings(items, sortKey, sortDir, ratingStats);
+  }, [allListings, filterWoj, filterPrz, search, colFilters, minRating, sortKey, sortDir, ratingStats]);
 
   // Price tier counts
   const counts = useMemo(() => {
@@ -257,6 +314,23 @@ export default function Listings() {
     filtered.forEach(l => { c[getPriceTier(l.cena)]++; });
     return c;
   }, [filtered]);
+
+  const hasFilters = !!(filterWoj || filterPrz || search || Object.values(colFilters).some(Boolean) || minRating > 0);
+
+  function clearFilters() {
+    setFilterWoj(""); setFilterPrz(""); setSearch("");
+    setColFilters({}); setMinRating(0);
+  }
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+
+  function SortIcon({ col }: { col: SortKey }) {
+    if (sortKey !== col) return <ArrowUpDown className="w-3 h-3 opacity-40" />;
+    return sortDir === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />;
+  }
 
   // ── Click-outside deselect ─────────────────────────────────────────────────
   useEffect(() => {
@@ -269,7 +343,7 @@ export default function Listings() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ── Mirror scrollbar sync (fixed position, always visible when table is in view) ──
+  // ── Mirror scrollbar sync (fixed, always visible when table in view) ────────
   useEffect(() => {
     const table = tableScrollRef.current;
     const mirror = mirrorScrollRef.current;
@@ -277,50 +351,32 @@ export default function Listings() {
     const wrapper = tableContainerRef.current;
     if (!table || !mirror || !inner) return;
 
-    // Set inner width to match table scroll width
     const updateWidth = () => {
-      inner.style.width = table.scrollWidth + 'px';
-      // Also match the mirror width and left offset to the table container
+      inner.style.width = table.scrollWidth + "px";
       if (wrapper) {
         const rect = wrapper.getBoundingClientRect();
-        mirror.style.width = rect.width + 'px';
-        mirror.style.left = rect.left + 'px';
+        mirror.style.width = rect.width + "px";
+        mirror.style.left = rect.left + "px";
       }
     };
     updateWidth();
 
-    // Sync: table → mirror
     let syncingFromTable = false;
     let syncingFromMirror = false;
-    const onTableScroll = () => {
-      if (syncingFromMirror) return;
-      syncingFromTable = true;
-      mirror.scrollLeft = table.scrollLeft;
-      syncingFromTable = false;
-    };
-    // Sync: mirror → table
-    const onMirrorScroll = () => {
-      if (syncingFromTable) return;
-      syncingFromMirror = true;
-      table.scrollLeft = mirror.scrollLeft;
-      syncingFromMirror = false;
-    };
+    const onTableScroll = () => { if (syncingFromMirror) return; syncingFromTable = true; mirror.scrollLeft = table.scrollLeft; syncingFromTable = false; };
+    const onMirrorScroll = () => { if (syncingFromTable) return; syncingFromMirror = true; table.scrollLeft = mirror.scrollLeft; syncingFromMirror = false; };
 
-    table.addEventListener('scroll', onTableScroll);
-    mirror.addEventListener('scroll', onMirrorScroll);
-    window.addEventListener('resize', updateWidth);
+    table.addEventListener("scroll", onTableScroll);
+    mirror.addEventListener("scroll", onMirrorScroll);
+    window.addEventListener("resize", updateWidth);
 
-    // IntersectionObserver: show fixed scrollbar only when table is visible
-    const observer = new IntersectionObserver(
-      ([entry]) => { setShowScrollbar(entry.isIntersecting); },
-      { threshold: 0.01 }
-    );
+    const observer = new IntersectionObserver(([entry]) => { setShowScrollbar(entry.isIntersecting); }, { threshold: 0.01 });
     if (wrapper) observer.observe(wrapper);
 
     return () => {
-      table.removeEventListener('scroll', onTableScroll);
-      mirror.removeEventListener('scroll', onMirrorScroll);
-      window.removeEventListener('resize', updateWidth);
+      table.removeEventListener("scroll", onTableScroll);
+      mirror.removeEventListener("scroll", onMirrorScroll);
+      window.removeEventListener("resize", updateWidth);
       observer.disconnect();
     };
   }, []);
@@ -332,20 +388,20 @@ export default function Listings() {
     setMapReady(true);
   }, []);
 
-  // The "active" id for map marker sizing: selected takes priority over hovered
   const activeMapId = selectedId ?? hoveredId;
 
+  // Map always reflects filtered set
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
     const filteredIds = new Set(filtered.map(l => l.id));
+
+    // Remove markers not in filtered set
     markersRef.current.forEach((marker, id) => {
-      if (!filteredIds.has(id)) {
-        marker.map = null;
-        markersRef.current.delete(id);
-      }
+      if (!filteredIds.has(id)) { marker.map = null; markersRef.current.delete(id); }
     });
 
+    // Add/update markers for filtered listings
     filtered.forEach(listing => {
       if (!listing.latitude || !listing.longitude) return;
       const lat = parseFloat(String(listing.latitude));
@@ -381,13 +437,11 @@ export default function Listings() {
       markersRef.current.set(listing.id, marker);
     });
 
+    // Fit bounds only on initial load (no active selection, markers just created)
     if (!activeMapId && markersRef.current.size > 0) {
       const bounds = new google.maps.LatLngBounds();
       let hasPoints = false;
-      markersRef.current.forEach(m => {
-        const pos = m.position;
-        if (pos) { bounds.extend(pos); hasPoints = true; }
-      });
+      markersRef.current.forEach(m => { const pos = m.position; if (pos) { bounds.extend(pos); hasPoints = true; } });
       if (hasPoints) mapRef.current.fitBounds(bounds, 40);
     }
   }, [filtered, mapReady, activeMapId]);
@@ -399,8 +453,7 @@ export default function Listings() {
       if (!listing) return;
       const color = getPriceColor(listing.cena);
       const isActive = activeMapId === id;
-      const scale = isActive ? 1.45 : 1;
-      marker.content = createPinElement(id, color, scale, isActive);
+      marker.content = createPinElement(id, color, isActive ? 1.45 : 1, isActive);
       marker.zIndex = isActive ? 999 : id;
     });
   }, [activeMapId, allListings]);
@@ -409,24 +462,7 @@ export default function Listings() {
     const size = Math.round(28 * scale);
     const fontSize = Math.round(11 * scale);
     const el = document.createElement("div");
-    el.style.cssText = `
-      width: ${size}px;
-      height: ${size}px;
-      background: ${color};
-      border: ${isActive ? "3px solid white" : "2px solid white"};
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: ${fontSize}px;
-      font-weight: bold;
-      color: white;
-      cursor: pointer;
-      box-shadow: ${isActive ? `0 0 0 3px ${color}66, 0 4px 12px rgba(0,0,0,0.4)` : "0 2px 6px rgba(0,0,0,0.35)"};
-      transition: transform 0.15s ease;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      user-select: none;
-    `;
+    el.style.cssText = `width:${size}px;height:${size}px;background:${color};border:${isActive ? "3px" : "2px"} solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:bold;color:white;cursor:pointer;box-shadow:${isActive ? `0 0 0 3px ${color}66,0 4px 12px rgba(0,0,0,0.4)` : "0 2px 6px rgba(0,0,0,0.35)"};transition:transform 0.15s ease;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;user-select:none;`;
     el.textContent = String(id);
     return el;
   }
@@ -434,17 +470,20 @@ export default function Listings() {
   function showInfoWindow(listing: Listing, marker: google.maps.marker.AdvancedMarkerElement) {
     if (!infoWindowRef.current) return;
     const color = getPriceColor(listing.cena);
+    const stats = ratingStats[listing.id];
+    const starsHtml = stats ? `<span style="color:#f59e0b">★</span> ${stats.avg.toFixed(1)} <span style="color:#94a3b8">(${stats.count})</span>` : "";
     infoWindowRef.current.setContent(`
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-width: 200px; padding: 4px;">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-          <div style="width:24px;height:24px;background:${color};border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:11px;flex-shrink:0;">${listing.id}</div>
-          <strong style="font-size:14px;">${listing.miejscowosc}</strong>
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-width:200px;padding:4px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div style="width:28px;height:28px;background:${color};border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:12px;flex-shrink:0;">${listing.id}</div>
+          <div>
+            <div style="font-weight:600;font-size:14px;">${listing.miejscowosc}</div>
+            <div style="font-size:11px;color:#64748b;">${listing.gmina}, ${listing.powiat}</div>
+          </div>
         </div>
-        ${listing.gmina !== "-" ? `<div style="font-size:12px;color:#64748b;margin-bottom:4px;">Gmina: ${listing.gmina}</div>` : ""}
-        ${listing.wojewodztwo !== "-" ? `<div style="font-size:12px;color:#64748b;margin-bottom:4px;">Woj. ${listing.wojewodztwo}</div>` : ""}
-        ${listing.rozmiarDzialki !== "-" ? `<div style="font-size:12px;color:#64748b;margin-bottom:4px;">Działka: ${listing.rozmiarDzialki}</div>` : ""}
-        ${listing.przeznaczenie !== "-" ? `<div style="font-size:12px;color:#64748b;margin-bottom:4px;">Przeznaczenie: ${listing.przeznaczenie}</div>` : ""}
-        <div style="font-size:15px;font-weight:bold;color:${color};margin: 6px 0;">${listing.cena !== "-" ? listing.cena : "Cena nieznana"}</div>
+        <div style="font-size:15px;font-weight:700;color:${color};margin-bottom:4px;">${listing.cena}</div>
+        ${listing.przeznaczenie !== "-" ? `<div style="font-size:11px;color:#475569;margin-bottom:4px;">${listing.przeznaczenie}</div>` : ""}
+        ${starsHtml ? `<div style="font-size:12px;margin-bottom:6px;">${starsHtml}</div>` : ""}
         <a href="${listing.url}" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:#3b82f6;text-decoration:none;">🔗 Otwórz ogłoszenie</a>
       </div>
     `);
@@ -452,128 +491,141 @@ export default function Listings() {
   }
 
   function scrollToRow(id: number) {
-    const row = rowRefs.current.get(id);
-    if (row) {
-      // Scroll the table container horizontally to start (to show sticky ID col)
-      if (tableContainerRef.current) tableContainerRef.current.scrollLeft = 0;
-      row.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    const el = rowRefs.current.get(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  // ── URL submission ─────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
   async function handleSubmit() {
     if (!submitUrl.trim()) return;
     setIsSubmitting(true);
     try {
       const result = await submitMutation.mutateAsync({ url: submitUrl.trim() });
-      const meta = (result as any)?._meta;
-      const geocoded = meta?.geocoded;
-      const fetchOk = meta?.fetchSuccess;
-      toast.success("Oferta dodana!", {
-        description: fetchOk
-          ? `Dane wyekstrahowane. ${geocoded ? "Lokalizacja na mapie ✓" : "Brak współrzędnych (lokalizacja nieznana)"}`
-          : "Strona niedostępna — dane mogą być niekompletne. Sprawdź i uzupełnij ręcznie.",
-        duration: fetchOk ? 4000 : 7000,
-      });
-      setSubmitUrl("");
       await refetch();
-    } catch (err: any) {
-      toast.error("Błąd podczas dodawania oferty", {
-        description: err?.message || "Sprawdź URL i spróbuj ponownie.",
-      });
+      setSubmitUrl("");
+      const meta = (result as { _meta?: { fetchSuccess: boolean; geocoded: boolean } })._meta;
+      if (meta?.fetchSuccess) {
+        toast.success(`Dodano ofertę #${result.id} — ${result.miejscowosc}`, {
+          description: meta.geocoded ? "✓ Zlokalizowano na mapie" : "⚠ Brak współrzędnych — pin nie pojawi się na mapie",
+        });
+      } else {
+        toast.warning(`Dodano ofertę #${result.id} (ograniczone dane)`, {
+          description: "Nie udało się pobrać treści strony. Dane mogą być niekompletne.",
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Nieznany błąd";
+      toast.error("Błąd podczas dodawania", { description: msg });
     } finally {
       setIsSubmitting(false);
     }
   }
 
-  // ── Delete ─────────────────────────────────────────────────────────────────
   async function handleDelete(id: number) {
     if (!confirm(`Usunąć ofertę #${id}?`)) return;
     try {
       await deleteMutation.mutateAsync({ id });
-      const marker = markersRef.current.get(id);
-      if (marker) { marker.map = null; markersRef.current.delete(id); }
-      if (selectedId === id) setSelectedId(null);
       await refetch();
-      toast.success(`Oferta #${id} usunięta.`);
-    } catch (err: any) {
-      toast.error("Błąd podczas usuwania", { description: err?.message });
+      if (selectedId === id) setSelectedId(null);
+      toast.success(`Oferta #${id} usunięta`);
+    } catch {
+      toast.error("Błąd podczas usuwania");
     }
   }
 
-  // ── Sort toggle ────────────────────────────────────────────────────────────
-  function toggleSort(key: keyof Listing) {
-    if (sortKey === key) {
-      setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
+  async function handleRate(listingId: number, score: number) {
+    try {
+      await addRatingMutation.mutateAsync({ listingId, score });
+      await refetchRatings();
+      toast.success(`Oceniono ofertę #${listingId}: ${score}/5`);
+    } catch {
+      toast.error("Błąd podczas oceniania");
     }
   }
 
-  function SortIcon({ col }: { col: keyof Listing }) {
-    if (sortKey !== col) return <ArrowUpDown className="w-3 h-3 opacity-40" />;
-    return sortDir === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />;
+  async function handleSaveNotes(listingId: number, notes: string) {
+    try {
+      await updateNotesMutation.mutateAsync({ id: listingId, notes });
+      await refetch();
+    } catch {
+      toast.error("Błąd podczas zapisywania notatki");
+    }
   }
 
-  const hasFilters = !!(filterWoj || filterPrz || search);
-  function clearFilters() { setFilterWoj(""); setFilterPrz(""); setSearch(""); }
+  // ── Column definitions ────────────────────────────────────────────────────
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
-          <p className="text-slate-500 text-sm">Ładowanie ofert...</p>
-        </div>
-      </div>
-    );
-  }
+  const COLUMNS: {
+    key: string;
+    label: string;
+    sortable?: boolean;
+    filterable?: boolean;
+    filterType?: "text" | "select";
+    filterOptions?: string[];
+    sticky?: "left" | "right";
+    stickyOffset?: number;
+    width: number;
+    wrap?: boolean;
+  }[] = [
+    { key: "id",             label: "ID",              sortable: true,  filterable: true,  filterType: "text",   sticky: "left",  stickyOffset: 0,  width: 44 },
+    { key: "url",            label: "URL",                                                                                                           width: 48 },
+    { key: "wojewodztwo",    label: "Województwo",     sortable: true,  filterable: true,  filterType: "select", filterOptions: uniqueWoj,           width: 120 },
+    { key: "powiat",         label: "Powiat",          sortable: true,  filterable: true,  filterType: "text",                                       width: 110 },
+    { key: "gmina",          label: "Gmina",           sortable: true,  filterable: true,  filterType: "text",                                       width: 110 },
+    { key: "miejscowosc",    label: "Miejscowość",     sortable: true,  filterable: true,  filterType: "text",                                       width: 110 },
+    { key: "rozmiarDzialki", label: "Rozmiar działki", sortable: true,  filterable: true,  filterType: "text",                                       width: 100 },
+    { key: "media",          label: "Media",                            filterable: true,  filterType: "text",                    wrap: true,         width: 170 },
+    { key: "przeznaczenie",  label: "Przeznaczenie",   sortable: true,  filterable: true,  filterType: "select", filterOptions: uniquePrz,           width: 130 },
+    { key: "zabudowania",    label: "Zabudowania",                      filterable: true,  filterType: "text",                    wrap: true,         width: 190 },
+    { key: "notes",          label: "Notatki",                                                                                   wrap: true,         width: 160 },
+    { key: "avgRating",      label: "Ocena",           sortable: true,                                                                               width: 90 },
+    { key: "cena",           label: "Cena",            sortable: true,  filterable: true,  filterType: "text",   sticky: "right", stickyOffset: 36,  width: 100 },
+  ];
+
+  const totalWidth = COLUMNS.reduce((s, c) => s + c.width, 0) + 36; // +36 for actions
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* ── Header ── */}
-      <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-30">
-        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <MapPin className="w-6 h-6 text-blue-600 flex-shrink-0" />
+      <div className="max-w-[1600px] mx-auto px-4 py-6 space-y-4">
+
+        {/* ── Header ── */}
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+            <MapPin className="w-4 h-4 text-white" />
+          </div>
           <div>
-            <h1 className="text-lg font-bold text-slate-900 leading-tight">Tracker Ofert Nieruchomości</h1>
+            <h1 className="text-xl font-bold text-slate-800">Tracker Ofert Nieruchomości</h1>
             <p className="text-xs text-slate-500">{allListings.length} ofert w bazie</p>
           </div>
         </div>
-      </header>
 
-      <div className="max-w-screen-2xl mx-auto px-4 py-4 space-y-4">
-
-        {/* ── URL Submission ── */}
-        <Card className="border border-blue-200 bg-blue-50/60 shadow-sm">
+        {/* ── Add listing ── */}
+        <Card className="border border-blue-100 bg-blue-50/40 shadow-sm">
           <CardContent className="pt-4 pb-4">
-            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Plus className="w-4 h-4 text-blue-600" />
-                <span className="text-sm font-semibold text-blue-900">Dodaj ofertę</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-blue-700 flex-shrink-0 w-28">
+                <Plus className="w-4 h-4" />
+                Dodaj ofertę
               </div>
-              <div className="flex gap-2 flex-1 w-full">
-                <Input
-                  className="flex-1 h-9 text-sm bg-white border-blue-200 focus:border-blue-400"
-                  placeholder="Wklej link do oferty (OLX, Facebook, Otodom...)"
-                  value={submitUrl}
-                  onChange={e => setSubmitUrl(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && !isSubmitting && handleSubmit()}
-                  disabled={isSubmitting}
-                />
-                <Button
-                  onClick={handleSubmit}
-                  disabled={isSubmitting || !submitUrl.trim()}
-                  className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium flex-shrink-0"
-                >
-                  {isSubmitting ? (
-                    <><Loader2 className="w-4 h-4 animate-spin mr-1" /> Analizuję...</>
-                  ) : "Dodaj"}
-                </Button>
-              </div>
+              <Input
+                className="flex-1 h-9 text-sm bg-white border-blue-200 focus:border-blue-400"
+                placeholder="Wklej link do oferty (OLX, Facebook, Otodom...)"
+                value={submitUrl}
+                onChange={e => setSubmitUrl(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && !isSubmitting && handleSubmit()}
+                disabled={isSubmitting}
+              />
+              <Button
+                onClick={handleSubmit}
+                disabled={isSubmitting || !submitUrl.trim()}
+                className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium flex-shrink-0"
+              >
+                {isSubmitting ? <><Loader2 className="w-4 h-4 animate-spin mr-1" /> Analizuję...</> : "Dodaj"}
+              </Button>
             </div>
-            <p className="text-xs text-blue-600/70 mt-2 ml-0 sm:ml-[calc(4rem+8px)]">
+            <p className="text-xs text-blue-600/70 mt-2 ml-[calc(7rem+12px)]">
               AI automatycznie wyciągnie dane: województwo, powiat, gmina, miejscowość, rozmiar działki, media, przeznaczenie, zabudowania, cena
             </p>
           </CardContent>
@@ -583,12 +635,10 @@ export default function Listings() {
         <Card className="border border-slate-200 shadow-sm">
           <CardContent className="pt-4 pb-3">
             <div className="flex flex-wrap gap-3 items-end">
-              <div className="flex flex-col gap-1 min-w-[160px]">
+              <div className="flex flex-col gap-1 min-w-[150px]">
                 <label className="text-xs font-medium text-slate-600">Województwo</label>
                 <Select value={filterWoj || "__all__"} onValueChange={v => setFilterWoj(v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Wszystkie" />
-                  </SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Wszystkie" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">Wszystkie</SelectItem>
                     {uniqueWoj.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
@@ -596,15 +646,26 @@ export default function Listings() {
                 </Select>
               </div>
 
-              <div className="flex flex-col gap-1 min-w-[160px]">
+              <div className="flex flex-col gap-1 min-w-[150px]">
                 <label className="text-xs font-medium text-slate-600">Przeznaczenie</label>
                 <Select value={filterPrz || "__all__"} onValueChange={v => setFilterPrz(v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Wszystkie" />
-                  </SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Wszystkie" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">Wszystkie</SelectItem>
                     {uniquePrz.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-1 min-w-[150px]">
+                <label className="text-xs font-medium text-slate-600">Min. ocena</label>
+                <Select value={String(minRating)} onValueChange={v => setMinRating(Number(v))}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Wszystkie</SelectItem>
+                    <SelectItem value="3">★★★ 3+</SelectItem>
+                    <SelectItem value="4">★★★★ 4+</SelectItem>
+                    <SelectItem value="5">★★★★★ tylko 5</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -653,11 +714,7 @@ export default function Listings() {
                 <span className="text-xs text-blue-600 font-medium flex items-center gap-1">
                   <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                   Zaznaczono: #{selectedId}
-                  <button
-                    className="ml-1 text-slate-400 hover:text-slate-600"
-                    onClick={() => setSelectedId(null)}
-                    title="Odznacz"
-                  >
+                  <button className="ml-1 text-slate-400 hover:text-slate-600" onClick={() => setSelectedId(null)} title="Odznacz">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -669,266 +726,229 @@ export default function Listings() {
         {/* ── Map ── */}
         <Card className="border border-slate-200 shadow-sm overflow-hidden">
           <div className="h-[420px] md:h-[500px]">
-            <MapView
-              initialCenter={{ lat: 52.0, lng: 19.5 }}
-              initialZoom={6}
-              onMapReady={handleMapReady}
-              className="w-full h-full"
-            />
+            <MapView initialCenter={{ lat: 52.0, lng: 19.5 }} initialZoom={6} onMapReady={handleMapReady} className="w-full h-full" />
           </div>
         </Card>
 
         {/* ── Table ── */}
         <div ref={tableContainerRef}>
-        <Card className="border border-slate-200 shadow-sm">
-          <CardHeader className="pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-              Tabela ofert ({filtered.length})
-              {selectedId && (
-                <span className="text-xs font-normal text-slate-400">
-                  — kliknij poza tabelą aby odznaczyć
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {/* Scroll container — tableScrollRef for mirror scrollbar sync */}
-            <div ref={tableScrollRef} className="overflow-x-auto relative">
-              <table className="w-full text-xs border-collapse" style={{ minWidth: "1100px", tableLayout: "fixed" }}>
-                <colgroup>
-                  <col style={{ width: "44px" }} />{/* ID */}
-                  <col style={{ width: "48px" }} />{/* URL */}
-                  <col style={{ width: "130px" }} />{/* Województwo */}
-                  <col style={{ width: "110px" }} />{/* Powiat */}
-                  <col style={{ width: "110px" }} />{/* Gmina */}
-                  <col style={{ width: "110px" }} />{/* Miejscowość */}
-                  <col style={{ width: "100px" }} />{/* Rozmiar działki */}
-                  <col style={{ width: "180px" }} />{/* Media */}
-                  <col style={{ width: "130px" }} />{/* Przeznaczenie */}
-                  <col style={{ width: "200px" }} />{/* Zabudowania */}
-                  <col style={{ width: "100px" }} />{/* Cena */}
-                  <col style={{ width: "36px" }} />{/* Akcje */}
-                </colgroup>
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {COLUMNS.map(col => {
-                      const isSticky = !!col.sticky;
-                      const stickyStyle: React.CSSProperties = isSticky
-                        ? {
-                            position: "sticky",
-                            [col.sticky === "left" ? "left" : "right"]: col.stickyOffset ?? 0,
-                            zIndex: 10,
-                            background: "#f8fafc",
-                            boxShadow: col.sticky === "left"
-                              ? "2px 0 4px -1px rgba(0,0,0,0.08)"
-                              : "-2px 0 4px -1px rgba(0,0,0,0.08)",
-                          }
-                        : {};
-                      return (
-                        <th
-                          key={col.key}
-                          className="text-left font-semibold text-slate-600 whitespace-nowrap px-3 py-2"
-                          style={{ minWidth: col.minW, maxWidth: col.maxW, width: col.maxW, ...stickyStyle }}
-                        >
-                          {col.sortable ? (
-                            <button
-                              className="flex items-center gap-1 hover:text-slate-900 transition-colors"
-                              onClick={() => toggleSort(col.key)}
-                            >
-                              {col.label}
-                              <SortIcon col={col.key} />
-                            </button>
-                          ) : col.label}
-                        </th>
-                      );
-                    })}
-                    {/* Actions column — sticky right at 0 */}
-                    <th
-                      className="text-left font-semibold text-slate-600 px-3 py-2"
-                      style={{
-                        position: "sticky",
-                        right: 0,
-                        zIndex: 10,
-                        background: "#f8fafc",
-                        boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
-                        width: "36px",
-                        minWidth: "36px",
-                        maxWidth: "36px",
-                      }}
-                    >
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.length === 0 ? (
-                    <tr>
-                      <td colSpan={COLUMNS.length + 1} className="text-center text-slate-400 py-12 text-sm">
-                        Brak ofert spełniających kryteria
-                      </td>
-                    </tr>
-                  ) : (
-                    filtered.map(listing => {
-                      const isSelected = selectedId === listing.id;
-                      const isHovered = hoveredId === listing.id && !isSelected;
-                      const rowStyle = getRowTint(listing.cena, isSelected, isHovered);
-                      const priceColor = getPriceColor(listing.cena);
+          <Card className="border border-slate-200 shadow-sm">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                Tabela ofert ({filtered.length})
+                {selectedId && <span className="text-xs font-normal text-slate-400">— kliknij poza tabelą aby odznaczyć</span>}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div ref={tableScrollRef} className="overflow-x-auto relative">
+                <table className="w-full text-xs border-collapse" style={{ minWidth: `${totalWidth}px`, tableLayout: "fixed" }}>
+                  <colgroup>
+                    {COLUMNS.map(col => <col key={col.key} style={{ width: `${col.width}px` }} />)}
+                    <col style={{ width: "36px" }} />
+                  </colgroup>
 
-                      // Sticky cell backgrounds must match row bg
-                      const stickyBg = isSelected ? "#dbeafe" : isHovered
-                        ? (getPriceTier(listing.cena) === "green" ? "#f0fdf4"
-                          : getPriceTier(listing.cena) === "yellow" ? "#fefce8"
-                          : getPriceTier(listing.cena) === "orange" ? "#fff7ed" : "#f8fafc")
-                        : (getPriceTier(listing.cena) === "green" ? "#f0fdf480"
-                          : getPriceTier(listing.cena) === "yellow" ? "#fefce880"
-                          : getPriceTier(listing.cena) === "orange" ? "#fff7ed80" : "white");
-
-                      return (
-                        <tr
-                          key={listing.id}
-                          ref={el => { if (el) rowRefs.current.set(listing.id, el); else rowRefs.current.delete(listing.id); }}
-                          style={rowStyle}
-                          className="cursor-pointer transition-colors border-b border-slate-100 last:border-0"
-                          onClick={() => {
-                            // Toggle selection: click same row again to deselect
-                            if (selectedId === listing.id) {
-                              setSelectedId(null);
-                              return;
-                            }
-                            setSelectedId(listing.id);
-                            const marker = markersRef.current.get(listing.id);
-                            if (marker && mapRef.current) {
-                              const pos = marker.position;
-                              if (pos) {
-                                mapRef.current.panTo(pos);
-                                mapRef.current.setZoom(12);
-                                showInfoWindow(listing, marker);
-                              }
-                            }
-                          }}
-                          onMouseEnter={() => setHoveredId(listing.id)}
-                          onMouseLeave={() => setHoveredId(null)}
-                        >
-                          {/* ID — sticky left */}
-                          <td
-                            className="px-3 py-2 font-bold text-slate-800 whitespace-nowrap"
-                            style={{
-                              position: "sticky",
-                              left: 0,
-                              zIndex: 5,
-                              background: stickyBg,
-                              boxShadow: "2px 0 4px -1px rgba(0,0,0,0.08)",
-                            }}
-                          >
-                            {isSelected && (
-                              <span
-                                className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 mb-0.5"
-                                style={{ background: priceColor }}
-                              />
+                  {/* ── Header row ── */}
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      {COLUMNS.map(col => {
+                        const isSticky = !!col.sticky;
+                        const stickyStyle: React.CSSProperties = isSticky ? {
+                          position: "sticky",
+                          [col.sticky === "left" ? "left" : "right"]: col.stickyOffset ?? 0,
+                          zIndex: 10,
+                          background: "#f8fafc",
+                          boxShadow: col.sticky === "left" ? "2px 0 4px -1px rgba(0,0,0,0.08)" : "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                        } : {};
+                        return (
+                          <th key={col.key} className="text-left font-semibold text-slate-600 px-2 py-2" style={{ ...stickyStyle }}>
+                            {col.sortable ? (
+                              <button className="flex items-center gap-1 hover:text-slate-900 transition-colors whitespace-nowrap" onClick={() => toggleSort(col.key as SortKey)}>
+                                {col.label} <SortIcon col={col.key as SortKey} />
+                              </button>
+                            ) : (
+                              <span className="whitespace-nowrap">{col.label}</span>
                             )}
-                            {listing.id}
-                          </td>
+                          </th>
+                        );
+                      })}
+                      {/* Actions header — sticky right:0 */}
+                      <th className="px-2 py-2" style={{ position: "sticky", right: 0, zIndex: 10, background: "#f8fafc", boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)", width: "36px" }} />
+                    </tr>
 
-                          {/* URL */}
-                          <td className="px-3 py-2">
-                            <a
-                              href={listing.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:text-blue-700 flex items-center gap-1"
-                              onClick={e => e.stopPropagation()}
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              <span className="truncate max-w-[100px]">Link</span>
-                            </a>
-                          </td>
+                    {/* ── Column filter row ── */}
+                    <tr className="bg-white border-b border-slate-100">
+                      {COLUMNS.map(col => {
+                        const isSticky = !!col.sticky;
+                        const stickyStyle: React.CSSProperties = isSticky ? {
+                          position: "sticky",
+                          [col.sticky === "left" ? "left" : "right"]: col.stickyOffset ?? 0,
+                          zIndex: 10,
+                          background: "white",
+                          boxShadow: col.sticky === "left" ? "2px 0 4px -1px rgba(0,0,0,0.08)" : "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                        } : {};
 
-                          {/* Województwo */}
-                          <td className="px-3 py-2 text-slate-700" style={{ maxWidth: "150px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.wojewodztwo}>{listing.wojewodztwo}</td>
-                          {/* Powiat */}
-                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "140px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.powiat}>{listing.powiat}</td>
-                          {/* Gmina */}
-                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "140px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.gmina}>{listing.gmina}</td>
-                          {/* Miejscowość */}
-                          <td className="px-3 py-2 font-medium text-slate-800" style={{ maxWidth: "150px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={listing.miejscowosc}>{listing.miejscowosc}</td>
-                          {/* Rozmiar działki */}
-                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap" style={{ maxWidth: "130px" }}>{listing.rozmiarDzialki}</td>
-                          {/* Media — wraps */}
-                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "220px", minWidth: "140px", whiteSpace: "normal", lineHeight: "1.4" }}>{listing.media}</td>
-                          {/* Przeznaczenie */}
-                          <td className="px-3 py-2 whitespace-nowrap" style={{ maxWidth: "160px" }}>
-                            {listing.przeznaczenie !== "-" ? (
-                              <Badge variant="outline" className="text-xs font-normal">{listing.przeznaczenie}</Badge>
-                            ) : "-"}
-                          </td>
-                          {/* Zabudowania — wraps */}
-                          <td className="px-3 py-2 text-slate-600" style={{ maxWidth: "260px", minWidth: "160px", whiteSpace: "normal", lineHeight: "1.4" }}>{listing.zabudowania}</td>
+                        if (!col.filterable) {
+                          return <td key={col.key} className="px-2 py-1" style={stickyStyle} />;
+                        }
 
-                          {/* Cena — sticky right */}
-                          <td
-                            className="px-3 py-2 whitespace-nowrap"
-                            style={{
-                              position: "sticky",
-                              right: 40,
-                              zIndex: 5,
-                              background: stickyBg,
-                              boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
+                        const filterVal = colFilters[col.key] ?? "";
+
+                        if (col.filterType === "select" && col.filterOptions) {
+                          return (
+                            <td key={col.key} className="px-1 py-1" style={stickyStyle}>
+                              <select
+                                className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:border-blue-400"
+                                value={filterVal}
+                                onChange={e => setColFilters(f => ({ ...f, [col.key]: e.target.value }))}
+                              >
+                                <option value="">Wszystkie</option>
+                                {col.filterOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            </td>
+                          );
+                        }
+
+                        return (
+                          <td key={col.key} className="px-1 py-1" style={stickyStyle}>
+                            <div className="relative">
+                              <input
+                                className="w-full text-[10px] border border-slate-200 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:border-blue-400 pr-4"
+                                placeholder={col.key === "cena" ? "np. 100-300" : "filtruj..."}
+                                value={filterVal}
+                                onChange={e => setColFilters(f => ({ ...f, [col.key]: e.target.value }))}
+                              />
+                              {filterVal && (
+                                <button className="absolute right-0.5 top-0.5 text-slate-300 hover:text-slate-500" onClick={() => setColFilters(f => ({ ...f, [col.key]: "" }))}>
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 py-1" style={{ position: "sticky", right: 0, zIndex: 10, background: "white", boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)", width: "36px" }} />
+                    </tr>
+                  </thead>
+
+                  {/* ── Body ── */}
+                  <tbody>
+                    {isLoading ? (
+                      <tr><td colSpan={COLUMNS.length + 1} className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin mx-auto text-slate-400" /></td></tr>
+                    ) : filtered.length === 0 ? (
+                      <tr><td colSpan={COLUMNS.length + 1} className="text-center text-slate-400 py-12 text-sm">Brak ofert spełniających kryteria</td></tr>
+                    ) : (
+                      filtered.map(listing => {
+                        const isSelected = selectedId === listing.id;
+                        const isHovered = hoveredId === listing.id && !isSelected;
+                        const rowStyle = getRowTint(listing.cena, isSelected, isHovered);
+                        const priceColor = getPriceColor(listing.cena);
+                        const tier = getPriceTier(listing.cena);
+
+                        const stickyBg = isSelected ? "#dbeafe"
+                          : isHovered ? (tier === "green" ? "#f0fdf4" : tier === "yellow" ? "#fefce8" : tier === "orange" ? "#fff7ed" : "#f8fafc")
+                          : (tier === "green" ? "#f0fdf480" : tier === "yellow" ? "#fefce880" : tier === "orange" ? "#fff7ed80" : "white");
+
+                        return (
+                          <tr
+                            key={listing.id}
+                            ref={el => { if (el) rowRefs.current.set(listing.id, el); else rowRefs.current.delete(listing.id); }}
+                            style={rowStyle}
+                            className="cursor-pointer transition-colors border-b border-slate-100 last:border-0"
+                            onClick={() => {
+                              if (selectedId === listing.id) { setSelectedId(null); return; }
+                              setSelectedId(listing.id);
+                              const marker = markersRef.current.get(listing.id);
+                              if (marker && mapRef.current) {
+                                const pos = marker.position;
+                                if (pos) { mapRef.current.panTo(pos); mapRef.current.setZoom(12); showInfoWindow(listing, marker); }
+                              }
                             }}
+                            onMouseEnter={() => setHoveredId(listing.id)}
+                            onMouseLeave={() => setHoveredId(null)}
                           >
-                            <span className="font-bold text-sm" style={{ color: priceColor }}>
-                              {listing.cena}
-                            </span>
-                          </td>
+                            {/* ID — sticky left */}
+                            <td className="px-2 py-2 font-bold text-slate-800 whitespace-nowrap" style={{ position: "sticky", left: 0, zIndex: 5, background: stickyBg, boxShadow: "2px 0 4px -1px rgba(0,0,0,0.08)" }}>
+                              {isSelected && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 mb-0.5" style={{ background: priceColor }} />}
+                              {listing.id}
+                            </td>
 
-                          {/* Actions — sticky right at 0 */}
-                          <td
-                            className="px-1 py-2"
-                            style={{
-                              position: "sticky",
-                              right: 0,
-                              zIndex: 5,
-                              background: stickyBg,
-                              boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)",
-                              width: "36px",
-                              minWidth: "36px",
-                              maxWidth: "36px",
-                            }}
-                          >
-                            <button
-                              className="text-slate-300 hover:text-red-500 transition-colors"
-                              onClick={e => { e.stopPropagation(); handleDelete(listing.id); }}
-                              title="Usuń ofertę"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-        </div>{/* end tableContainerRef */}
+                            {/* URL */}
+                            <td className="px-2 py-2">
+                              <a href={listing.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                                <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                              </a>
+                            </td>
 
-        {/* ── Fixed mirror scrollbar ── always visible at bottom of window when table is in view ── */}
+                            {/* Województwo */}
+                            <td className="px-2 py-2 text-slate-700 truncate" title={listing.wojewodztwo}>{listing.wojewodztwo}</td>
+                            {/* Powiat */}
+                            <td className="px-2 py-2 text-slate-600 truncate" title={listing.powiat}>{listing.powiat}</td>
+                            {/* Gmina */}
+                            <td className="px-2 py-2 text-slate-600 truncate" title={listing.gmina}>{listing.gmina}</td>
+                            {/* Miejscowość */}
+                            <td className="px-2 py-2 font-medium text-slate-800 truncate" title={listing.miejscowosc}>{listing.miejscowosc}</td>
+                            {/* Rozmiar działki */}
+                            <td className="px-2 py-2 text-slate-600 whitespace-nowrap">{listing.rozmiarDzialki}</td>
+                            {/* Media — wraps */}
+                            <td className="px-2 py-2 text-slate-600" style={{ whiteSpace: "normal", lineHeight: "1.4" }}>{listing.media}</td>
+                            {/* Przeznaczenie */}
+                            <td className="px-2 py-2">
+                              {listing.przeznaczenie !== "-" ? (
+                                <Badge variant="outline" className="text-[10px] font-normal whitespace-normal text-left h-auto">{listing.przeznaczenie}</Badge>
+                              ) : "-"}
+                            </td>
+                            {/* Zabudowania — wraps */}
+                            <td className="px-2 py-2 text-slate-600" style={{ whiteSpace: "normal", lineHeight: "1.4" }}>{listing.zabudowania}</td>
+
+                            {/* Notes — editable */}
+                            <td className="px-2 py-2" style={{ whiteSpace: "normal" }}>
+                              <NotesCell listingId={listing.id} notes={listing.notes} onSave={handleSaveNotes} />
+                            </td>
+
+                            {/* Avg Rating — star widget */}
+                            <td className="px-2 py-2">
+                              <StarRating listingId={listing.id} stats={ratingStats[listing.id]} onRate={handleRate} />
+                            </td>
+
+                            {/* Cena — sticky right */}
+                            <td className="px-2 py-2 whitespace-nowrap" style={{ position: "sticky", right: 36, zIndex: 5, background: stickyBg, boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)" }}>
+                              <span className="font-bold text-sm" style={{ color: priceColor }}>{listing.cena}</span>
+                            </td>
+
+                            {/* Actions — sticky right:0 */}
+                            <td className="px-1 py-2" style={{ position: "sticky", right: 0, zIndex: 5, background: stickyBg, boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)", width: "36px" }}>
+                              <button className="text-slate-300 hover:text-red-500 transition-colors" onClick={e => { e.stopPropagation(); handleDelete(listing.id); }} title="Usuń ofertę">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ── Fixed mirror scrollbar ── */}
         <div
           ref={mirrorScrollRef}
           className="overflow-x-auto"
           style={{
-            position: 'fixed',
+            position: "fixed",
             bottom: 0,
             zIndex: 9999,
-            background: 'white',
-            borderTop: '2px solid #cbd5e1',
-            height: '16px',
-            display: showScrollbar ? 'block' : 'none',
-            // width and left are set dynamically by useEffect
+            background: "white",
+            borderTop: "2px solid #cbd5e1",
+            height: "16px",
+            display: showScrollbar ? "block" : "none",
           }}
         >
-          <div ref={mirrorInnerRef} style={{ height: '1px' }} />
+          <div ref={mirrorInnerRef} style={{ height: "1px" }} />
         </div>
+
       </div>
     </div>
   );

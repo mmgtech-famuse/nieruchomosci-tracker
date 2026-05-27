@@ -41,6 +41,9 @@ vi.mock("./db", () => ({
   getListingsByFilters: vi.fn().mockResolvedValue([]),
   insertListing: vi.fn().mockResolvedValue({ id: 99, url: "https://example.com/new" }),
   deleteListing: vi.fn().mockResolvedValue({ success: true }),
+  updateListingNotes: vi.fn().mockResolvedValue({ success: true }),
+  addRating: vi.fn().mockResolvedValue({ success: true }),
+  getRatingStats: vi.fn().mockResolvedValue({ 1: { avg: 4.5, count: 2 }, 2: { avg: 3.0, count: 1 } }),
 }));
 
 // ── Mock LLM and map ──────────────────────────────────────────────────────────
@@ -122,6 +125,42 @@ describe("listings.submitUrl", () => {
   it("rejects invalid URL", async () => {
     const caller = appRouter.createCaller(createCtx());
     await expect(caller.listings.submitUrl({ url: "not-a-url" })).rejects.toThrow();
+  });
+});
+
+describe("listings.addRating", () => {
+  it("accepts valid score 1-5", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    const result = await caller.listings.addRating({ listingId: 1, score: 4 });
+    expect(result).toMatchObject({ success: true });
+  });
+
+  it("rejects score out of range", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    await expect(caller.listings.addRating({ listingId: 1, score: 6 })).rejects.toThrow();
+    await expect(caller.listings.addRating({ listingId: 1, score: 0 })).rejects.toThrow();
+  });
+});
+
+describe("listings.updateNotes", () => {
+  it("saves notes for a listing", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    const result = await caller.listings.updateNotes({ id: 1, notes: "Warto zadzwonić" });
+    expect(result).toMatchObject({ success: true });
+  });
+
+  it("rejects notes longer than 2000 chars", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    await expect(caller.listings.updateNotes({ id: 1, notes: "x".repeat(2001) })).rejects.toThrow();
+  });
+});
+
+describe("listings.getRatingStats", () => {
+  it("returns rating stats keyed by listing id", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    const result = await caller.listings.getRatingStats();
+    expect(result[1]).toMatchObject({ avg: 4.5, count: 2 });
+    expect(result[2]).toMatchObject({ avg: 3.0, count: 1 });
   });
 });
 
