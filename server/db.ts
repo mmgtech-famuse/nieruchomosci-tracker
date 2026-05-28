@@ -123,6 +123,13 @@ export async function updateListingNotes(id: number, notes: string) {
   return { success: true };
 }
 
+export async function toggleFlag(id: number, flagged: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(listings).set({ flagged }).where(eq(listings.id, id));
+  return { success: true, flagged };
+}
+
 export async function archiveListing(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

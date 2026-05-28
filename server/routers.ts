@@ -609,6 +609,17 @@ ${pageContent.slice(0, 6000)}`;
         return { success: true, listing: updated[0] };
       }),
 
+    /** Toggle the "do kontaktu" flag on a listing */
+    toggleFlag: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        flagged: z.boolean(),
+      }))
+      .mutation(async ({ input }) => {
+        const { toggleFlag } = await import("./db");
+        return toggleFlag(input.id, input.flagged);
+      }),
+
     /** Archive a listing (hide from map, move to archived section) */
     archiveListing: publicProcedure
       .input(z.object({ id: z.number().int().positive() }))

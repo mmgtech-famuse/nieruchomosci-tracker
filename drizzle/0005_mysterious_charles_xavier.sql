@@ -1,0 +1,1 @@
+ALTER TABLE `listings` ADD `flagged` boolean DEFAULT false NOT NULL;

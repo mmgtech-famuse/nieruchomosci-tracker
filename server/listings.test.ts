@@ -17,6 +17,8 @@ vi.mock("./db", () => ({
       cena: "250 000 zł",
       latitude: "52.2297",
       longitude: "21.0122",
+      archived: false,
+      flagged: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -35,6 +37,7 @@ vi.mock("./db", () => ({
       latitude: "51.7592",
       longitude: "19.4560",
       archived: false,
+      flagged: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -47,6 +50,7 @@ vi.mock("./db", () => ({
   getRatingStats: vi.fn().mockResolvedValue({ 1: { avg: 4.5, count: 2 }, 2: { avg: 3.0, count: 1 } }),
   archiveListing: vi.fn().mockResolvedValue({ success: true }),
   unarchiveListing: vi.fn().mockResolvedValue({ success: true }),
+  toggleFlag: vi.fn().mockResolvedValue({ success: true, flagged: true }),
 }));
 
 // ── Mock LLM and map ──────────────────────────────────────────────────────────
@@ -188,6 +192,20 @@ describe("listings.unarchiveListing", () => {
   it("restores an archived listing by id", async () => {
     const caller = appRouter.createCaller(createCtx());
     const result = await caller.listings.unarchiveListing({ id: 1 });
+    expect(result).toMatchObject({ success: true });
+  });
+});
+
+describe("listings.toggleFlag", () => {
+  it("flags a listing by id", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    const result = await caller.listings.toggleFlag({ id: 1, flagged: true });
+    expect(result).toMatchObject({ success: true, flagged: true });
+  });
+
+  it("unflags a listing by id", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    const result = await caller.listings.toggleFlag({ id: 1, flagged: false });
     expect(result).toMatchObject({ success: true });
   });
 });

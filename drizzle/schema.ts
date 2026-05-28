@@ -33,6 +33,7 @@ export const listings = mysqlTable(
     longitude: decimal("longitude", { precision: 11, scale: 7 }),
     notes: text("notes"),
     archived: boolean("archived").default(false).notNull(),
+    flagged: boolean("flagged").default(false).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },

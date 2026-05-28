@@ -16,6 +16,7 @@ export interface Listing {
   longitude: string | null;
   notes: string | null;
   archived: boolean;
+  flagged: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

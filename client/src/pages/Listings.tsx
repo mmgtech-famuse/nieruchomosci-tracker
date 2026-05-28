@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Flag,
   GitCompareArrows,
   Loader2,
   MapPin,
@@ -291,6 +292,10 @@ export default function Listings() {
   const archiveMutation = trpc.listings.archiveListing.useMutation();
   const unarchiveMutation = trpc.listings.unarchiveListing.useMutation();
   const checkUrlsMutation = trpc.listings.checkUrls.useMutation();
+  const toggleFlagMutation = trpc.listings.toggleFlag.useMutation();
+
+  // Flag filter
+  const [filterFlagged, setFilterFlagged] = useState(false);
 
   // Activity check dialog state
   type CheckResult = { id: number; url: string; active: boolean; reason: string };
@@ -364,10 +369,12 @@ export default function Listings() {
         const avg = ratingStats[l.id]?.avg ?? 0;
         if (avg < minRating) return false;
       }
+      // Flagged filter
+      if (filterFlagged && !l.flagged) return false;
       return true;
     });
     return sortListings(items, sortKey, sortDir, ratingStats);
-  }, [activeListings, filterWoj, filterPrz, search, colFilters, minRating, sortKey, sortDir, ratingStats]);
+  }, [activeListings, filterWoj, filterPrz, search, colFilters, minRating, sortKey, sortDir, ratingStats, filterFlagged]);
 
   // Price tier counts
   const counts = useMemo(() => {
@@ -376,11 +383,11 @@ export default function Listings() {
     return c;
   }, [filtered]);
 
-  const hasFilters = !!(filterWoj || filterPrz || search || Object.values(colFilters).some(Boolean) || minRating > 0);
+  const hasFilters = !!(filterWoj || filterPrz || search || Object.values(colFilters).some(Boolean) || minRating > 0 || filterFlagged);
 
   function clearFilters() {
     setFilterWoj(""); setFilterPrz(""); setSearch("");
-    setColFilters({}); setMinRating(0);
+    setColFilters({}); setMinRating(0); setFilterFlagged(false);
   }
 
   function toggleSort(key: SortKey) {
@@ -475,12 +482,12 @@ export default function Listings() {
 
       if (markersRef.current.has(listing.id)) {
         const existing = markersRef.current.get(listing.id)!;
-        existing.content = createPinElement(listing.id, color, scale, isActive);
+        existing.content = createPinElement(listing.id, color, scale, isActive, listing.flagged);
         existing.zIndex = isActive ? 999 : listing.id;
         return;
       }
 
-      const markerEl = createPinElement(listing.id, color, scale, isActive);
+      const markerEl = createPinElement(listing.id, color, scale, isActive, listing.flagged);
       const marker = new google.maps.marker.AdvancedMarkerElement({
         position: { lat, lng },
         map: mapRef.current,
@@ -514,18 +521,27 @@ export default function Listings() {
       if (!listing) return;
       const color = getPriceColor(listing.cena);
       const isActive = activeMapId === id;
-      marker.content = createPinElement(id, color, isActive ? 1.45 : 1, isActive);
+      marker.content = createPinElement(id, color, isActive ? 1.45 : 1, isActive, listing.flagged);
       marker.zIndex = isActive ? 999 : id;
     });
   }, [activeMapId, allListings]);
 
-  function createPinElement(id: number, color: string, scale: number, isActive: boolean): HTMLElement {
+  function createPinElement(id: number, color: string, scale: number, isActive: boolean, flagged = false): HTMLElement {
     const size = Math.round(28 * scale);
     const fontSize = Math.round(11 * scale);
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "position:relative;display:inline-flex;";
     const el = document.createElement("div");
-    el.style.cssText = `width:${size}px;height:${size}px;background:${color};border:${isActive ? "3px" : "2px"} solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:bold;color:white;cursor:pointer;box-shadow:${isActive ? `0 0 0 3px ${color}66,0 4px 12px rgba(0,0,0,0.4)` : "0 2px 6px rgba(0,0,0,0.35)"};transition:transform 0.15s ease;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;user-select:none;`;
+    el.style.cssText = `width:${size}px;height:${size}px;background:${color};border:${isActive ? "3px" : "2px"} solid ${flagged ? "#eab308" : "white"};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:bold;color:white;cursor:pointer;box-shadow:${isActive ? `0 0 0 3px ${color}66,0 4px 12px rgba(0,0,0,0.4)` : flagged ? "0 0 0 2px #eab30866,0 2px 6px rgba(0,0,0,0.35)" : "0 2px 6px rgba(0,0,0,0.35)"};transition:transform 0.15s ease;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;user-select:none;`;
     el.textContent = String(id);
-    return el;
+    wrapper.appendChild(el);
+    if (flagged) {
+      const badge = document.createElement("div");
+      badge.style.cssText = "position:absolute;top:-4px;right:-4px;width:13px;height:13px;background:#eab308;border-radius:50%;border:1.5px solid white;display:flex;align-items:center;justify-content:center;font-size:8px;line-height:1;";
+      badge.textContent = "🚩";
+      wrapper.appendChild(badge);
+    }
+    return wrapper;
   }
 
   function showInfoWindow(listing: Listing, marker: google.maps.marker.AdvancedMarkerElement) {
@@ -740,6 +756,27 @@ export default function Listings() {
       await refetch();
     } catch {
       toast.error("Błąd podczas zapisywania notatki");
+    }
+  }
+
+  async function handleToggleFlag(listing: Listing) {
+    const newFlagged = !listing.flagged;
+    // Optimistic update
+    utils.listings.getAll.setData(undefined, (old) =>
+      old ? old.map(l => l.id === listing.id ? { ...l, flagged: newFlagged } : l) : old
+    );
+    try {
+      await toggleFlagMutation.mutateAsync({ id: listing.id, flagged: newFlagged });
+      toast.success(
+        newFlagged ? `Oferta #${listing.id} oznaczona “do kontaktu” 🚩` : `Oferta #${listing.id}: flaga usunięta`,
+        { duration: 2000 }
+      );
+    } catch {
+      // Rollback
+      utils.listings.getAll.setData(undefined, (old) =>
+        old ? old.map(l => l.id === listing.id ? { ...l, flagged: !newFlagged } : l) : old
+      );
+      toast.error("Błąd podczas zmiany flagi");
     }
   }
 
@@ -1058,6 +1095,25 @@ export default function Listings() {
                   🟠 400k+ <span className="ml-1 bg-orange-200 text-orange-900 px-1 rounded">{counts.orange}</span>
                 </Badge>
               </div>
+              {/* Flagged filter chip */}
+              <button
+                onClick={() => setFilterFlagged(v => !v)}
+                className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition-all ${
+                  filterFlagged
+                    ? "bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm"
+                    : "bg-white text-slate-500 border-slate-200 hover:border-yellow-400 hover:text-yellow-700"
+                }`}
+                title={filterFlagged ? "Kliknij aby pokazać wszystkie" : "Pokaż tylko oferty oznaczone 'do kontaktu'"}
+              >
+                <Flag className="w-3 h-3" fill={filterFlagged ? "currentColor" : "none"} />
+                Tylko oflagowane
+                {filterFlagged && (
+                  <span className="ml-0.5 bg-yellow-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">
+                    {filtered.length}
+                  </span>
+                )}
+              </button>
+
               {selectedId && (
                 <span className="text-xs text-blue-600 font-medium flex items-center gap-1">
                   <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
@@ -1217,11 +1273,15 @@ export default function Listings() {
 
                         const isCompared = compareIds.has(listing.id);
 
+                        const flaggedStyle = listing.flagged
+                          ? { boxShadow: "inset 3px 0 0 #eab308" }
+                          : {};
+
                         return (
                           <tr
                             key={listing.id}
                             ref={el => { if (el) rowRefs.current.set(listing.id, el); else rowRefs.current.delete(listing.id); }}
-                            style={rowStyle}
+                            style={{ ...rowStyle, ...flaggedStyle }}
                             className="cursor-pointer transition-colors border-b border-slate-100 last:border-0"
                             onClick={() => {
                               if (selectedId === listing.id) { setSelectedId(null); return; }
@@ -1322,10 +1382,24 @@ export default function Listings() {
                             </td>
 
                             {/* Actions — sticky right:0 */}
-                            <td className="px-1 py-2" style={{ position: "sticky", right: 0, zIndex: 5, background: stickyBg, boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)", width: "36px" }}>
-                              <button className="text-slate-300 hover:text-red-500 transition-colors" onClick={e => { e.stopPropagation(); handleDelete(listing.id); }} title="Usuń ofertę">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                            <td className="px-1 py-2" style={{ position: "sticky", right: 0, zIndex: 5, background: stickyBg, boxShadow: "-2px 0 4px -1px rgba(0,0,0,0.08)", width: "60px" }}>
+                              <div className="flex items-center gap-1">
+                                {/* Flag button */}
+                                <button
+                                  className={`transition-colors ${
+                                    listing.flagged
+                                      ? "text-yellow-500 hover:text-yellow-600"
+                                      : "text-slate-200 hover:text-yellow-400"
+                                  }`}
+                                  onClick={e => { e.stopPropagation(); handleToggleFlag(listing); }}
+                                  title={listing.flagged ? "Usuń flagę 'do kontaktu'" : "Oznacz jako 'do kontaktu'"}
+                                >
+                                  <Flag className="w-3.5 h-3.5" fill={listing.flagged ? "currentColor" : "none"} />
+                                </button>
+                                <button className="text-slate-300 hover:text-red-500 transition-colors" onClick={e => { e.stopPropagation(); handleDelete(listing.id); }} title="Usuń ofertę">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );

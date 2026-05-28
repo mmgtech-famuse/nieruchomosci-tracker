@@ -94,3 +94,13 @@
 - [x] Frontend: archived listings excluded from main filtered table
 - [x] Frontend: collapsible "Archiwizowane" section at bottom of table (greyed out rows, "Przywróć" button per row)
 - [x] Frontend: archived count badge on the collapsible section header
+
+## Flaga "do kontaktu"
+- [x] DB: add `flagged` BOOLEAN column (default false) to listings table + migration
+- [x] Backend: toggleFlag procedure — flips flagged true/false for given id
+- [x] Shared types: add `flagged` field to Listing interface
+- [x] Frontend: yellow flag button (🚩) in each table row (actions column), toggles on click with optimistic update
+- [x] Frontend: flagged rows get subtle yellow left-border highlight
+- [x] Frontend: filter chip "Tylko oflagowane" in filter bar
+- [x] Frontend: map markers for flagged listings get a yellow star/flag indicator
+- [x] Tests: add toggleFlag test
