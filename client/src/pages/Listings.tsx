@@ -894,8 +894,8 @@ export default function Listings() {
               disabled={checkRunning}
               title="Sprawdź które ogłoszenia są nadal aktywne (AI analizuje każdy URL)"
             >
-              {checkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-              {checkRunning ? "Sprawdzanie..." : "Sprawdź aktywność"}
+              {checkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {checkRunning ? "Sprawdzanie..." : "Sprawdź aktualność ofert"}
             </Button>
           </div>
         </div>
