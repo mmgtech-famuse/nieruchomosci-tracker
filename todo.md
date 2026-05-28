@@ -81,3 +81,16 @@
 - [x] Frontend: price-tier color coding in comparison panel headers and Cena row
 - [x] Frontend: "Ogłoszenie" link and "Mapa" button per listing in compare panel (closes sheet, pans map, opens info window)
 - [x] Frontend: "Wyczyść zaznaczenie" button in compare panel footer
+
+## Archiwizacja nieaktywnych ofert
+- [x] DB: add `archived` BOOLEAN column (default false) to listings table + migration
+- [x] Backend: checkUrls procedure — fetches each URL via HTTP, uses AI to detect "oferta nieaktywna/usunięta" patterns, returns list of {id, url, active, reason}
+- [x] Backend: archiveListing procedure — sets archived=true for given id
+- [x] Backend: unarchiveListing procedure — sets archived=false for given id
+- [x] Frontend: "Sprawdź aktywność" button in header (next to Geokoduj brakujące)
+- [x] Frontend: progress dialog during check (shows progress bar + current URL being checked)
+- [x] Frontend: results dialog — lists inactive listings with reason, checkbox per row, "Archiwizuj zaznaczone" + "Usuń zaznaczone" buttons
+- [x] Frontend: archived listings hidden from map pins
+- [x] Frontend: archived listings excluded from main filtered table
+- [x] Frontend: collapsible "Archiwizowane" section at bottom of table (greyed out rows, "Przywróć" button per row)
+- [x] Frontend: archived count badge on the collapsible section header

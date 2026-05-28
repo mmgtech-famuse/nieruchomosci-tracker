@@ -123,6 +123,20 @@ export async function updateListingNotes(id: number, notes: string) {
   return { success: true };
 }
 
+export async function archiveListing(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(listings).set({ archived: true }).where(eq(listings.id, id));
+  return { success: true };
+}
+
+export async function unarchiveListing(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(listings).set({ archived: false }).where(eq(listings.id, id));
+  return { success: true };
+}
+
 // ─── Ratings ──────────────────────────────────────────────────────────────────
 
 /** Add a rating (1–5) for a listing. Anonymous — no user tracking. */

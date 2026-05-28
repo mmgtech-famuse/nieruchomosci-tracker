@@ -34,6 +34,7 @@ vi.mock("./db", () => ({
       cena: "350 000 zł",
       latitude: "51.7592",
       longitude: "19.4560",
+      archived: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -44,6 +45,8 @@ vi.mock("./db", () => ({
   updateListingNotes: vi.fn().mockResolvedValue({ success: true }),
   addRating: vi.fn().mockResolvedValue({ success: true }),
   getRatingStats: vi.fn().mockResolvedValue({ 1: { avg: 4.5, count: 2 }, 2: { avg: 3.0, count: 1 } }),
+  archiveListing: vi.fn().mockResolvedValue({ success: true }),
+  unarchiveListing: vi.fn().mockResolvedValue({ success: true }),
 }));
 
 // ── Mock LLM and map ──────────────────────────────────────────────────────────
@@ -169,6 +172,22 @@ describe("auth.logout", () => {
     const ctx = createCtx();
     const caller = appRouter.createCaller(ctx);
     const result = await caller.auth.logout();
+    expect(result).toMatchObject({ success: true });
+  });
+});
+
+describe("listings.archiveListing", () => {
+  it("archives a listing by id", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    const result = await caller.listings.archiveListing({ id: 1 });
+    expect(result).toMatchObject({ success: true });
+  });
+});
+
+describe("listings.unarchiveListing", () => {
+  it("restores an archived listing by id", async () => {
+    const caller = appRouter.createCaller(createCtx());
+    const result = await caller.listings.unarchiveListing({ id: 1 });
     expect(result).toMatchObject({ success: true });
   });
 });

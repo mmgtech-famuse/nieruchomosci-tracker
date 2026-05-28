@@ -609,6 +609,119 @@ ${pageContent.slice(0, 6000)}`;
         return { success: true, listing: updated[0] };
       }),
 
+    /** Archive a listing (hide from map, move to archived section) */
+    archiveListing: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const { archiveListing } = await import("./db");
+        return archiveListing(input.id);
+      }),
+
+    /** Restore an archived listing */
+    unarchiveListing: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const { unarchiveListing } = await import("./db");
+        return unarchiveListing(input.id);
+      }),
+
+    /**
+     * Check activity of all (or a subset of) listing URLs.
+     * For each URL: fetch the page, then ask AI if the listing is still active.
+     * Returns an array of { id, url, active, reason }.
+     * Runs checks in parallel batches to avoid timeout.
+     */
+    checkUrls: publicProcedure
+      .input(z.object({
+        ids: z.array(z.number().int().positive()).optional(), // if omitted, check all non-archived
+      }))
+      .mutation(async ({ input }) => {
+        const { getAllListings } = await import("./db");
+        const { invokeLLM } = await import("./_core/llm");
+
+        const all = await getAllListings();
+        const toCheck = input.ids
+          ? all.filter(l => input.ids!.includes(l.id) && !l.archived)
+          : all.filter(l => !l.archived);
+
+        type CheckResult = { id: number; url: string; active: boolean; reason: string };
+
+        async function checkOne(listing: { id: number; url: string }): Promise<CheckResult> {
+          try {
+            // Fetch the page
+            const resp = await fetch(listing.url, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept-Language": "pl-PL,pl;q=0.9",
+              },
+              signal: AbortSignal.timeout(15000),
+              redirect: "follow",
+            });
+
+            if (!resp.ok) {
+              // HTTP 404 or similar — definitely inactive
+              return { id: listing.id, url: listing.url, active: false, reason: `HTTP ${resp.status} — strona nie istnieje` };
+            }
+
+            const html = await resp.text();
+            const text = html
+              .replace(/<script[\s\S]*?<\/script>/gi, " ")
+              .replace(/<style[\s\S]*?<\/style>/gi, " ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 4000);
+
+            // Ask AI to determine if the listing is still active
+            const aiResp = await invokeLLM({
+              messages: [
+                {
+                  role: "system",
+                  content: "Jesteś asystentem sprawdzającym aktywność ogłoszeń nieruchomości. Odpowiadasz TYLKO w JSON.",
+                },
+                {
+                  role: "user",
+                  content: `Sprawdź czy poniższe ogłoszenie nieruchomości jest nadal aktywne.\n\nURL: ${listing.url}\n\nTREŚĆ STRONY (fragment):\n${text}\n\nZwróć JSON: { "active": true/false, "reason": "krótkie wyjaśnienie po polsku" }\n\nOGŁOSZENIE JEST NIEAKTYWNE jeśli:\n- Strona zawiera komunikat o usunięciu/wygaśnięciu ogłoszenia (np. "To ogłoszenie jest nieaktywne", "Ogłoszenie wygasło", "Oferta niedostępna", "Nie znaleziono ogłoszenia")\n- Strona przekierowuje do strony głównej lub listy ogłoszeń bez treści\n- Brak jakichkolwiek danych o nieruchomości\n\nOGŁOSZENIE JEST AKTYWNE jeśli:\n- Zawiera opis nieruchomości, cenę, lokalizację\n- Nie ma komunikatów o wygaśnięciu`,
+                },
+              ],
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "activity_check",
+                  strict: true,
+                  schema: {
+                    type: "object",
+                    properties: {
+                      active: { type: "boolean" },
+                      reason: { type: "string" },
+                    },
+                    required: ["active", "reason"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+            });
+
+            const result = JSON.parse(aiResp.choices[0].message.content as string) as { active: boolean; reason: string };
+            return { id: listing.id, url: listing.url, active: result.active, reason: result.reason };
+          } catch (err) {
+            console.warn(`[checkUrls] Error for ID ${listing.id}:`, err);
+            return { id: listing.id, url: listing.url, active: true, reason: "Nie udało się sprawdzić (błąd sieci)" };
+          }
+        }
+
+        // Process in batches of 5 to avoid overwhelming the server
+        const BATCH = 5;
+        const results: CheckResult[] = [];
+        for (let i = 0; i < toCheck.length; i += BATCH) {
+          const batch = toCheck.slice(i, i + BATCH);
+          const batchResults = await Promise.all(batch.map(l => checkOne(l)));
+          results.push(...batchResults);
+        }
+
+        return results;
+      }),
+
     /** Update a single field on a listing (for inline editing) */
     updateField: publicProcedure
       .input(z.object({

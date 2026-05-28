@@ -7,18 +7,25 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
 import { MapView } from "@/components/Map";
 import { toast } from "sonner";
 import {
+  AlertTriangle,
+  Archive,
   ArrowUpDown,
-  ChevronUp,
   ChevronDown,
+  ChevronUp,
   ExternalLink,
   GitCompareArrows,
   Loader2,
   MapPin,
   Plus,
+  RefreshCw,
+  RotateCcw,
   Search,
+  ShieldCheck,
   Star,
   Trash2,
   X,
@@ -281,6 +288,22 @@ export default function Listings() {
   const addRatingMutation = trpc.listings.addRating.useMutation();
   const geocodeMissingMutation = trpc.listings.geocodeMissing.useMutation();
   const updateFieldMutation = trpc.listings.updateField.useMutation();
+  const archiveMutation = trpc.listings.archiveListing.useMutation();
+  const unarchiveMutation = trpc.listings.unarchiveListing.useMutation();
+  const checkUrlsMutation = trpc.listings.checkUrls.useMutation();
+
+  // Activity check dialog state
+  type CheckResult = { id: number; url: string; active: boolean; reason: string };
+  const [checkDialogOpen, setCheckDialogOpen] = useState(false);
+  const [checkResults, setCheckResults] = useState<CheckResult[]>([]);
+  const [checkProgress, setCheckProgress] = useState(0); // 0-100
+  const [checkRunning, setCheckRunning] = useState(false);
+  const [selectedInactive, setSelectedInactive] = useState<Set<number>>(new Set());
+  const [checkCurrentUrl, setCheckCurrentUrl] = useState("");
+  const [checkDone, setCheckDone] = useState(0);
+
+  // Archived section
+  const [archivedExpanded, setArchivedExpanded] = useState(false);
   const reextractMutation = trpc.listings.reextractUrl.useMutation();
   const [isGeocodingMissing, setIsGeocodingMissing] = useState(false);
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
@@ -296,9 +319,13 @@ export default function Listings() {
     [allListings]
   );
 
-  // Filtered + sorted listings
+  // Split active vs archived
+  const activeListings = useMemo(() => allListings.filter(l => !l.archived), [allListings]);
+  const archivedListings = useMemo(() => allListings.filter(l => l.archived), [allListings]);
+
+  // Filtered + sorted listings (active only)
   const filtered = useMemo(() => {
-    let items = allListings.filter(l => {
+    let items = activeListings.filter(l => {
       // Top-bar filters
       if (filterWoj && l.wojewodztwo !== filterWoj) return false;
       if (filterPrz && !l.przeznaczenie?.toLowerCase().includes(filterPrz.toLowerCase())) return false;
@@ -340,7 +367,7 @@ export default function Listings() {
       return true;
     });
     return sortListings(items, sortKey, sortDir, ratingStats);
-  }, [allListings, filterWoj, filterPrz, search, colFilters, minRating, sortKey, sortDir, ratingStats]);
+  }, [activeListings, filterWoj, filterPrz, search, colFilters, minRating, sortKey, sortDir, ratingStats]);
 
   // Price tier counts
   const counts = useMemo(() => {
@@ -716,6 +743,85 @@ export default function Listings() {
     }
   }
 
+  async function handleCheckUrls() {
+    setCheckDialogOpen(true);
+    setCheckRunning(true);
+    setCheckResults([]);
+    setCheckProgress(0);
+    setCheckDone(0);
+    setCheckCurrentUrl("");
+    setSelectedInactive(new Set());
+    try {
+      const total = activeListings.length;
+      if (total === 0) { setCheckRunning(false); return; }
+
+      // Simulate incremental progress while the server is processing
+      // (server runs in batches of 5; we animate progress smoothly)
+      let simDone = 0;
+      const interval = setInterval(() => {
+        simDone = Math.min(simDone + 1, total - 1);
+        setCheckDone(simDone);
+        setCheckProgress(Math.round((simDone / total) * 95)); // cap at 95% until done
+        const listing = activeListings[simDone];
+        if (listing) setCheckCurrentUrl(listing.url);
+      }, Math.max(800, (total * 4000) / total)); // pace based on count
+
+      const results = await checkUrlsMutation.mutateAsync({});
+      clearInterval(interval);
+
+      setCheckResults(results);
+      setCheckProgress(100);
+      setCheckDone(total);
+      setCheckCurrentUrl("");
+
+      // Auto-select all inactive
+      const inactiveIds = new Set(results.filter(r => !r.active).map(r => r.id));
+      setSelectedInactive(inactiveIds);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Nieznany błąd";
+      toast.error("Błąd sprawdzania", { description: msg });
+    } finally {
+      setCheckRunning(false);
+    }
+  }
+
+  async function handleArchiveSelected() {
+    const ids = Array.from(selectedInactive);
+    let done = 0;
+    for (const id of ids) {
+      try { await archiveMutation.mutateAsync({ id }); done++; } catch { /* skip */ }
+    }
+    await refetch();
+    setCheckDialogOpen(false);
+    setCheckResults([]);
+    setSelectedInactive(new Set());
+    toast.success(`Zarchiwizowano ${done} ofert`);
+  }
+
+  async function handleDeleteSelected() {
+    const ids = Array.from(selectedInactive);
+    if (!confirm(`Usunąć ${ids.length} ofert na stałe?`)) return;
+    let done = 0;
+    for (const id of ids) {
+      try { await deleteMutation.mutateAsync({ id }); done++; } catch { /* skip */ }
+    }
+    await refetch();
+    setCheckDialogOpen(false);
+    setCheckResults([]);
+    setSelectedInactive(new Set());
+    toast.success(`Usunięto ${done} ofert`);
+  }
+
+  async function handleUnarchive(id: number) {
+    try {
+      await unarchiveMutation.mutateAsync({ id });
+      await refetch();
+      toast.success(`Oferta #${id} przywrócona`);
+    } catch {
+      toast.error("Błąd podczas przywrócenia");
+    }
+  }
+
   // ── Column definitions ────────────────────────────────────────────────────
 
   const COLUMNS: {
@@ -779,6 +885,17 @@ export default function Listings() {
             >
               {isGeocodingMissing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MapPin className="w-3.5 h-3.5" />}
               {isGeocodingMissing ? "Geokodowanie..." : "Geokoduj brakujące"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50"
+              onClick={handleCheckUrls}
+              disabled={checkRunning}
+              title="Sprawdź które ogłoszenia są nadal aktywne (AI analizuje każdy URL)"
+            >
+              {checkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+              {checkRunning ? "Sprawdzanie..." : "Sprawdź aktywność"}
             </Button>
           </div>
         </div>
@@ -1221,6 +1338,77 @@ export default function Listings() {
           </Card>
         </div>
 
+        {/* ── Archived listings section ── */}
+        {archivedListings.length > 0 && (
+          <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+            <button
+              className="w-full flex items-center gap-3 px-4 py-3 bg-slate-100 hover:bg-slate-150 transition-colors text-left"
+              onClick={() => setArchivedExpanded(v => !v)}
+            >
+              <Archive className="w-4 h-4 text-slate-400 flex-shrink-0" />
+              <span className="text-sm font-semibold text-slate-500">Archiwizowane</span>
+              <span className="ml-1 text-xs bg-slate-300 text-slate-600 rounded-full px-2 py-0.5 font-medium">{archivedListings.length}</span>
+              <span className="ml-auto text-xs text-slate-400">{archivedExpanded ? "Zwiń" : "Rozwiń"}</span>
+              {archivedExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </button>
+
+            {archivedExpanded && (
+              <div className="overflow-x-auto bg-white">
+                <table className="w-full text-xs border-collapse" style={{ minWidth: "700px" }}>
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="text-left px-3 py-2 text-slate-400 font-medium w-10">ID</th>
+                      <th className="text-left px-3 py-2 text-slate-400 font-medium">Miejscowość</th>
+                      <th className="text-left px-3 py-2 text-slate-400 font-medium">Województwo</th>
+                      <th className="text-left px-3 py-2 text-slate-400 font-medium">Rozmiar działki</th>
+                      <th className="text-left px-3 py-2 text-slate-400 font-medium">Przeznaczenie</th>
+                      <th className="text-left px-3 py-2 text-slate-400 font-medium">Cena</th>
+                      <th className="text-left px-3 py-2 text-slate-400 font-medium w-24">Akcje</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {archivedListings.map(listing => (
+                      <tr key={listing.id} className="border-b border-slate-100 last:border-0 opacity-60 hover:opacity-80 transition-opacity">
+                        <td className="px-3 py-2 font-bold text-slate-400">{listing.id}</td>
+                        <td className="px-3 py-2 text-slate-400">
+                          <div className="flex items-center gap-1.5">
+                            <span>{listing.miejscowosc}</span>
+                            <a href={listing.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-600" onClick={e => e.stopPropagation()}>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-slate-400">{listing.wojewodztwo}</td>
+                        <td className="px-3 py-2 text-slate-400">{listing.rozmiarDzialki}</td>
+                        <td className="px-3 py-2 text-slate-400">{listing.przeznaczenie}</td>
+                        <td className="px-3 py-2 text-slate-400">{listing.cena}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-600 transition-colors px-1.5 py-0.5 rounded border border-blue-200 hover:border-blue-400"
+                              onClick={() => handleUnarchive(listing.id)}
+                              title="Przywróć do aktywnych"
+                            >
+                              <RotateCcw className="w-3 h-3" /> Przywróć
+                            </button>
+                            <button
+                              className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-500 transition-colors px-1.5 py-0.5 rounded border border-red-200 hover:border-red-400"
+                              onClick={() => handleDelete(listing.id)}
+                              title="Usuń na stałe"
+                            >
+                              <Trash2 className="w-3 h-3" /> Usuń
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Floating compare bar ── */}
         {compareIds.size > 0 && (
           <div
@@ -1379,6 +1567,139 @@ export default function Listings() {
             </div>
           </SheetContent>
         </Sheet>
+
+        {/* ── Activity check dialog ── */}
+        <Dialog open={checkDialogOpen} onOpenChange={open => { if (!checkRunning) setCheckDialogOpen(open); }}>
+          <DialogContent className="max-w-2xl w-full">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-amber-600" />
+                Sprawdzanie aktywności ogłoszeń
+              </DialogTitle>
+            </DialogHeader>
+
+            {/* Progress / running state */}
+            {checkRunning && (
+              <div className="space-y-3 py-4">
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+                  <span>AI analizuje każdy URL… Proszę czekać, może to potrwać kilka minut.</span>
+                </div>
+                <Progress value={checkProgress} className="h-2" />
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Sprawdzono {checkDone} z {activeListings.length} ofert</span>
+                  {checkCurrentUrl && (
+                    <span className="truncate max-w-xs text-slate-300" title={checkCurrentUrl}>
+                      {checkCurrentUrl.length > 60 ? checkCurrentUrl.slice(0, 57) + "…" : checkCurrentUrl}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Results */}
+            {!checkRunning && checkResults.length > 0 && (
+              <div className="space-y-4">
+                {/* Summary */}
+                <div className="flex items-center gap-4 text-sm">
+                  <span className="flex items-center gap-1.5 text-green-700 font-medium">
+                    <ShieldCheck className="w-4 h-4" />
+                    {checkResults.filter(r => r.active).length} aktywnych
+                  </span>
+                  <span className="flex items-center gap-1.5 text-red-600 font-medium">
+                    <AlertTriangle className="w-4 h-4" />
+                    {checkResults.filter(r => !r.active).length} nieaktywnych
+                  </span>
+                </div>
+
+                {/* Inactive list */}
+                {checkResults.filter(r => !r.active).length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nieaktywne ogłoszenia</p>
+                    <div className="max-h-64 overflow-y-auto space-y-1 border border-slate-200 rounded-lg p-2">
+                      {checkResults.filter(r => !r.active).map(r => (
+                        <div key={r.id} className="flex items-start gap-2 p-2 rounded-md hover:bg-slate-50">
+                          <Checkbox
+                            checked={selectedInactive.has(r.id)}
+                            onCheckedChange={checked => {
+                              setSelectedInactive(prev => {
+                                const next = new Set(prev);
+                                if (checked) next.add(r.id); else next.delete(r.id);
+                                return next;
+                              });
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-600 text-xs">#{r.id}</span>
+                              <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 flex items-center gap-1 text-xs truncate">
+                                <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                <span className="truncate">{r.url}</span>
+                              </a>
+                            </div>
+                            <p className="text-[11px] text-red-500 mt-0.5">{r.reason}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="select-all-inactive"
+                        checked={selectedInactive.size === checkResults.filter(r => !r.active).length}
+                        onCheckedChange={checked => {
+                          if (checked) setSelectedInactive(new Set(checkResults.filter(r => !r.active).map(r => r.id)));
+                          else setSelectedInactive(new Set());
+                        }}
+                      />
+                      <label htmlFor="select-all-inactive" className="text-xs text-slate-500 cursor-pointer">Zaznacz wszystkie nieaktywne</label>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-green-700 bg-green-50 rounded-lg p-3">
+                    <ShieldCheck className="w-5 h-5" />
+                    <span className="text-sm font-medium">Wszystkie ogłoszenia są aktywne!</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Footer */}
+            <DialogFooter className="flex flex-wrap gap-2 justify-between items-center">
+              <div className="flex gap-2">
+                {selectedInactive.size > 0 && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50"
+                      onClick={handleArchiveSelected}
+                    >
+                      <Archive className="w-3.5 h-3.5" />
+                      Archiwizuj zaznaczone ({selectedInactive.size})
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-red-600 border-red-300 hover:bg-red-50"
+                      onClick={handleDeleteSelected}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Usuń zaznaczone ({selectedInactive.size})
+                    </Button>
+                  </>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setCheckDialogOpen(false); setCheckResults([]); }}
+                disabled={checkRunning}
+              >
+                Zamknij
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* ── Back to top button ── */}
         {showBackToTop && (

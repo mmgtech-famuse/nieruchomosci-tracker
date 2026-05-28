@@ -15,6 +15,7 @@ export interface Listing {
   latitude: string | null;
   longitude: string | null;
   notes: string | null;
+  archived: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

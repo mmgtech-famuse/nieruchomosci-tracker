@@ -1,0 +1,1 @@
+ALTER TABLE `listings` ADD `archived` boolean DEFAULT false NOT NULL;
