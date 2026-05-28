@@ -263,6 +263,8 @@ export default function Listings() {
   const markersRef = useRef<Map<number, google.maps.marker.AdvancedMarkerElement>>(new Map());
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  // Timer for single vs double-click disambiguation on markers
+  const markerClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Back-to-top
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -313,6 +315,9 @@ export default function Listings() {
 
   // Help / tutorial dialog
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Map expand toggle
+  const [mapExpanded, setMapExpanded] = useState(false);
   const reextractMutation = trpc.listings.reextractUrl.useMutation();
   const [isGeocodingMissing, setIsGeocodingMissing] = useState(false);
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
@@ -386,6 +391,17 @@ export default function Listings() {
     filtered.forEach(l => { c[getPriceTier(l.cena)]++; });
     return c;
   }, [filtered]);
+
+  // Summary stats for the stats bar
+  const stats = useMemo(() => {
+    const prices = activeListings.map(l => parsePricePLN(l.cena)).filter((p): p is number => p !== null);
+    const avgPrice = prices.length > 0 ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : null;
+    const flaggedCount = activeListings.filter(l => l.flagged).length;
+    const wojMap: Record<string, number> = {};
+    activeListings.forEach(l => { if (l.wojewodztwo && l.wojewodztwo !== "-") wojMap[l.wojewodztwo] = (wojMap[l.wojewodztwo] ?? 0) + 1; });
+    const topWoj = Object.entries(wojMap).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    return { avgPrice, flaggedCount, topWoj };
+  }, [activeListings]);
 
   const hasFilters = !!(filterWoj || filterPrz || search || Object.values(colFilters).some(Boolean) || minRating > 0 || filterFlagged);
 
@@ -500,10 +516,23 @@ export default function Listings() {
         zIndex: isActive ? 999 : listing.id,
       });
 
+      // Single click: open info window + select (no table scroll)
+      // Double click (via timer): scroll to table row + flash
       marker.addListener("gmp-click", () => {
-        setSelectedId(listing.id);
-        showInfoWindow(listing, marker);
-        scrollToRow(listing.id);
+        if (markerClickTimerRef.current) {
+          // Second click within 300ms → treat as double-click
+          clearTimeout(markerClickTimerRef.current);
+          markerClickTimerRef.current = null;
+          setSelectedId(listing.id);
+          scrollToRow(listing.id, true);
+        } else {
+          // First click — wait 300ms to see if a second arrives
+          markerClickTimerRef.current = setTimeout(() => {
+            markerClickTimerRef.current = null;
+            setSelectedId(listing.id);
+            showInfoWindow(listing, marker);
+          }, 300);
+        }
       });
 
       markersRef.current.set(listing.id, marker);
@@ -552,28 +581,46 @@ export default function Listings() {
     if (!infoWindowRef.current) return;
     const color = getPriceColor(listing.cena);
     const stats = ratingStats[listing.id];
-    const starsHtml = stats ? `<span style="color:#f59e0b">★</span> ${stats.avg.toFixed(1)} <span style="color:#94a3b8">(${stats.count})</span>` : "";
+    const starsHtml = stats && stats.count > 0
+      ? `<span style="color:#f59e0b">${"★".repeat(Math.round(stats.avg))}</span><span style="color:#e2e8f0">${"★".repeat(5 - Math.round(stats.avg))}</span> <span style="color:#94a3b8;font-size:11px;">${stats.avg.toFixed(1)} (${stats.count})</span>`
+      : "";
+    const flagHtml = listing.flagged ? `<span style="background:#fef9c3;color:#92400e;font-size:10px;padding:2px 6px;border-radius:999px;border:1px solid #fde68a;margin-left:4px;">🚩 do kontaktu</span>` : "";
+    const mediaHtml = listing.media && listing.media !== "-" ? `<div style="font-size:11px;color:#64748b;margin-bottom:3px;">⚡ ${listing.media}</div>` : "";
+    const rozmiarHtml = listing.rozmiarDzialki && listing.rozmiarDzialki !== "-" ? `<div style="font-size:11px;color:#64748b;margin-bottom:3px;">📍 ${listing.rozmiarDzialki}</div>` : "";
     infoWindowRef.current.setContent(`
-      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-width:200px;padding:4px;">
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-width:210px;max-width:260px;padding:4px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
           <div style="width:28px;height:28px;background:${color};border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:12px;flex-shrink:0;">${listing.id}</div>
-          <div>
-            <div style="font-weight:600;font-size:14px;">${listing.miejscowosc}</div>
-            <div style="font-size:11px;color:#64748b;">${listing.gmina}, ${listing.powiat}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:14px;display:flex;align-items:center;gap:4px;">${listing.miejscowosc}${flagHtml}</div>
+            <div style="font-size:11px;color:#64748b;">${listing.gmina}, ${listing.powiat}, ${listing.wojewodztwo}</div>
           </div>
         </div>
-        <div style="font-size:15px;font-weight:700;color:${color};margin-bottom:4px;">${listing.cena}</div>
-        ${listing.przeznaczenie !== "-" ? `<div style="font-size:11px;color:#475569;margin-bottom:4px;">${listing.przeznaczenie}</div>` : ""}
-        ${starsHtml ? `<div style="font-size:12px;margin-bottom:6px;">${starsHtml}</div>` : ""}
-        <a href="${listing.url}" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:#3b82f6;text-decoration:none;">🔗 Otwórz ogłoszenie</a>
+        <div style="font-size:16px;font-weight:700;color:${color};margin-bottom:6px;">${listing.cena}</div>
+        ${listing.przeznaczenie && listing.przeznaczenie !== "-" ? `<div style="font-size:11px;color:#475569;margin-bottom:3px;background:#f1f5f9;padding:2px 6px;border-radius:4px;display:inline-block;">${listing.przeznaczenie}</div><br style="margin-bottom:3px;">` : ""}
+        ${rozmiarHtml}${mediaHtml}
+        ${starsHtml ? `<div style="font-size:13px;margin-bottom:6px;margin-top:2px;">${starsHtml}</div>` : ""}
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #f1f5f9;">
+          <a href="${listing.url}" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:#3b82f6;text-decoration:none;">🔗 Otwórz ogłoszenie</a>
+          <span style="font-size:10px;color:#94a3b8;">2×klik → tabela</span>
+        </div>
       </div>
     `);
     infoWindowRef.current.open({ map: mapRef.current, anchor: marker });
   }
 
-  function scrollToRow(id: number) {
+  function scrollToRow(id: number, flash = false) {
     const el = rowRefs.current.get(id);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (flash) {
+      el.style.transition = "background-color 0s";
+      el.style.backgroundColor = "#bfdbfe"; // blue-200
+      setTimeout(() => {
+        el.style.transition = "background-color 0.8s ease";
+        el.style.backgroundColor = "";
+      }, 350);
+    }
   }
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -1140,12 +1187,48 @@ export default function Listings() {
 
         {/* ── Map ── */}
         <Card className="border border-slate-200 shadow-sm overflow-hidden">
-          <div className="h-[420px] md:h-[500px]">
+          <div style={{ height: mapExpanded ? "72vh" : "420px", transition: "height 0.35s cubic-bezier(0.23,1,0.32,1)" }}>
             <MapView initialCenter={{ lat: 52.0, lng: 19.5 }} initialZoom={6} onMapReady={handleMapReady} className="w-full h-full" />
+          </div>
+          <div className="flex justify-center py-1.5 border-t border-slate-100 bg-slate-50/60">
+            <button
+              onClick={() => setMapExpanded(v => !v)}
+              className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-blue-500 transition-colors px-3 py-0.5 rounded-full hover:bg-blue-50"
+            >
+              {mapExpanded
+                ? <><ChevronUp className="w-3 h-3" /> Zwień mapę</>
+                : <><ChevronDown className="w-3 h-3" /> Rozwiń mapę</>}
+            </button>
           </div>
         </Card>
 
         {/* ── Table ── */}
+        {/* ── Stats bar ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide font-medium mb-0.5">Aktywne oferty</p>
+            <p className="text-xl font-bold text-slate-800">{activeListings.length}</p>
+            {archivedListings.length > 0 && <p className="text-[10px] text-slate-400">{archivedListings.length} zarchiwizowanych</p>}
+          </div>
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide font-medium mb-0.5">Do kontaktu</p>
+            <p className="text-xl font-bold text-yellow-600">{stats.flaggedCount}</p>
+            <p className="text-[10px] text-slate-400">oflagowanych</p>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide font-medium mb-0.5">Średnia cena</p>
+            <p className="text-xl font-bold text-slate-800">
+              {stats.avgPrice !== null ? `${(stats.avgPrice / 1000).toFixed(0)} tys.` : "—"}
+            </p>
+            <p className="text-[10px] text-slate-400">zł (aktywne)</p>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide font-medium mb-0.5">Najcz. województwo</p>
+            <p className="text-sm font-bold text-slate-800 truncate">{stats.topWoj ?? "—"}</p>
+            <p className="text-[10px] text-slate-400">najwięcej ofert</p>
+          </div>
+        </div>
+
         <div ref={tableContainerRef}>
           <Card className="border border-slate-200 shadow-sm">
             <CardHeader className="pb-2 pt-4 px-4">
@@ -1164,7 +1247,7 @@ export default function Listings() {
                   </colgroup>
 
                   {/* ── Header row ── */}
-                  <thead>
+                  <thead className="sticky top-0 z-20">
                     <tr className="bg-slate-50 border-b border-slate-200">
                       {/* Compare checkbox header — select all filtered */}
                       <th className="px-1 py-2" style={{ position: "sticky", left: 0, zIndex: 11, background: "#f8fafc", width: "32px" }}>
@@ -1267,9 +1350,35 @@ export default function Listings() {
                   {/* ── Body ── */}
                   <tbody>
                     {isLoading ? (
-                      <tr><td colSpan={COLUMNS.length + 1} className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin mx-auto text-slate-400" /></td></tr>
+                      <tr><td colSpan={COLUMNS.length + 2} className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin mx-auto text-slate-400" /></td></tr>
                     ) : filtered.length === 0 ? (
-                      <tr><td colSpan={COLUMNS.length + 1} className="text-center text-slate-400 py-12 text-sm">Brak ofert spełniających kryteria</td></tr>
+                      <tr>
+                        <td colSpan={COLUMNS.length + 2} className="py-14">
+                          <div className="flex flex-col items-center gap-3 text-center">
+                            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
+                              <Search className="w-5 h-5 text-slate-400" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-slate-600 mb-1">Brak ofert spełniających kryteria</p>
+                              <p className="text-xs text-slate-400">
+                                {hasFilters ? (
+                                  <>
+                                    Spróbuj zmienić filtry lub{" "}
+                                    <button
+                                      className="text-blue-500 hover:text-blue-700 underline underline-offset-2"
+                                      onClick={clearFilters}
+                                    >
+                                      wyczyść wszystkie filtry
+                                    </button>
+                                  </>
+                                ) : (
+                                  "Wklej link do ogłoszenia w polu powyżej, aby dodać pierwszą ofertę."
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     ) : (
                       filtered.map(listing => {
                         const isSelected = selectedId === listing.id;

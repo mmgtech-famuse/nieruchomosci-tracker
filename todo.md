@@ -104,3 +104,12 @@
 - [x] Frontend: filter chip "Tylko oflagowane" in filter bar
 - [x] Frontend: map markers for flagged listings get a yellow star/flag indicator
 - [x] Tests: add toggleFlag test
+
+## UX Improvements (round 2)
+- [x] Map: single-click = info window only (no table scroll), double-click = scroll to table row + highlight
+- [x] Info window: show flagged badge 🚩 and star rating inside the popup
+- [x] Map: "Rozwiń/Zwiń mapę" toggle button to expand map height for better overview
+- [x] Table: sticky thead so column headers stay visible when scrolling down
+- [x] Stats bar: small summary row above table (total, flagged count, avg price, top voivodeship)
+- [x] Table: "Brak wyników" empty state with clear-filters suggestion
+- [x] Table: smooth flash animation on row when scrolled-to from map double-click
