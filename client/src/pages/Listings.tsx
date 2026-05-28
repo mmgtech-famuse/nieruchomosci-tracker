@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { MapView } from "@/components/Map";
 import { toast } from "sonner";
@@ -20,6 +20,7 @@ import {
   ExternalLink,
   Flag,
   GitCompareArrows,
+  HelpCircle,
   Loader2,
   MapPin,
   Plus,
@@ -309,6 +310,9 @@ export default function Listings() {
 
   // Archived section
   const [archivedExpanded, setArchivedExpanded] = useState(false);
+
+  // Help / tutorial dialog
+  const [helpOpen, setHelpOpen] = useState(false);
   const reextractMutation = trpc.listings.reextractUrl.useMutation();
   const [isGeocodingMissing, setIsGeocodingMissing] = useState(false);
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
@@ -934,6 +938,13 @@ export default function Listings() {
               {checkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               {checkRunning ? "Sprawdzanie..." : "Sprawdź aktualność ofert"}
             </Button>
+            <button
+              onClick={() => setHelpOpen(true)}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-blue-500 hover:bg-blue-50 transition-colors border border-slate-200 hover:border-blue-200"
+              title="Jak korzystać z aplikacji?"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
@@ -1772,6 +1783,129 @@ export default function Listings() {
                 Zamknij
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── Help / Tutorial Dialog ── */}
+        <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+          <DialogContent className="max-w-lg p-0 overflow-hidden rounded-2xl border-0 shadow-2xl">
+            <div className="bg-gradient-to-br from-blue-50 to-slate-50 px-6 pt-6 pb-4">
+              <DialogHeader>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center">
+                    <MapPin className="w-3.5 h-3.5 text-white" />
+                  </div>
+                  <DialogTitle className="text-base font-semibold text-slate-800">Jak korzystać z aplikacji?</DialogTitle>
+                </div>
+                <DialogDescription className="text-xs text-slate-500">
+                  Krótki przewodnik po najważniejszych funkcjach — wszystko w jednym miejscu.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+
+            <div className="px-6 py-4 space-y-3 max-h-[60vh] overflow-y-auto">
+
+              {/* Step 1 */}
+              <div className="flex gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                  <Plus className="w-4 h-4 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Dodaj ofertę</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Wklej link z OLX, Otodom, Facebook lub innego serwisu — AI automatycznie wyciągnie wszystkie dane: lokalizację, cenę, media i przeznaczenie.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="flex gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-yellow-100 flex items-center justify-center flex-shrink-0">
+                  <Flag className="w-4 h-4 text-yellow-600" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Oznacz ‚do kontaktu” 🚩</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Kliknij ikonę flagi w wierszu, aby wydzielić najciekawsze oferty. Pojawi się żółty pasek i pinezka na mapie. Filtr ‚Tylko oflagowane’ pozwala skupić się tylko na nich.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className="flex gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center flex-shrink-0">
+                  <Star className="w-4 h-4 text-green-600" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Oceniaj działki ★★★★★</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Każda oferta ma widget gwiazdek — kliknij aby ocenić od 1 do 5. Możesz filtrować po minimalnej ocenie, co ułatwia wybór najlepszych kandydatów.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 4 */}
+              <div className="flex gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0">
+                  <GitCompareArrows className="w-4 h-4 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Porównaj oferty obok siebie</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Zaznacz checkboxy przy kilku ofertach — pojawi się pasek na dole. Kliknij ‚Porównaj’, aby zobaczyć zestawienie wszystkich parametrów w jednym widoku.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 5 */}
+              <div className="flex gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center flex-shrink-0">
+                  <RefreshCw className="w-4 h-4 text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Sprawdź aktualność ofert</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Przycisk ‚Sprawedź aktualność ofert’ w nagłówku sprawdza każdy link. Nieaktywne ogłoszenia możesz zarchiwizować lub usunąć jednym kliknięciem.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 6 */}
+              <div className="flex gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+                  <Search className="w-4 h-4 text-slate-500" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Filtruj i szukaj</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Filtruj po województwie, przeznaczeniu, cenie i ocenie. Wyszukiwarka rozumie synonimy (np. ‚budowlana’ → ‚MN’). W każdej kolumnie tabeli jest dodatkowe pole filtrowania.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 7 */}
+              <div className="flex gap-3 p-3 rounded-xl bg-white border border-slate-100 shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-teal-100 flex items-center justify-center flex-shrink-0">
+                  <MapPin className="w-4 h-4 text-teal-600" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Mapa interaktywna</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Kliknij pinezkę na mapie, aby zaznaczyć ofertę w tabeli. Kliknij wiersz w tabeli, aby wycentrować mapę. Dwuklik otwiera okno z detalami.
+                  </p>
+                </div>
+              </div>
+
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 bg-white">
+              <Button
+                className="w-full h-9 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-xl"
+                onClick={() => setHelpOpen(false)}
+              >
+                Rozumiem, zaczynamy! 🚀
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
 
