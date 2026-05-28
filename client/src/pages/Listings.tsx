@@ -1187,18 +1187,8 @@ export default function Listings() {
 
         {/* ── Map ── */}
         <Card className="border border-slate-200 shadow-sm overflow-hidden">
-          <div style={{ height: mapExpanded ? "72vh" : "420px", transition: "height 0.35s cubic-bezier(0.23,1,0.32,1)" }}>
+          <div className="h-[420px] md:h-[500px]">
             <MapView initialCenter={{ lat: 52.0, lng: 19.5 }} initialZoom={6} onMapReady={handleMapReady} className="w-full h-full" />
-          </div>
-          <div className="flex justify-center py-1.5 border-t border-slate-100 bg-slate-50/60">
-            <button
-              onClick={() => setMapExpanded(v => !v)}
-              className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-blue-500 transition-colors px-3 py-0.5 rounded-full hover:bg-blue-50"
-            >
-              {mapExpanded
-                ? <><ChevronUp className="w-3 h-3" /> Zwień mapę</>
-                : <><ChevronDown className="w-3 h-3" /> Rozwiń mapę</>}
-            </button>
           </div>
         </Card>
 
