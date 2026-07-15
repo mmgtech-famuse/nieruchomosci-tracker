@@ -1762,6 +1762,20 @@ export default function Listings() {
               </DialogTitle>
             </DialogHeader>
 
+            {/* Initial state: show start button */}
+            {!checkRunning && checkResults.length === 0 && (
+              <div className="py-6 text-center space-y-4">
+                <p className="text-sm text-slate-600">Sprawdzisz <span className="font-bold text-slate-800">{activeListings.length}</span> aktywnych ogloszen</p>
+                <Button
+                  onClick={handleCheckUrls}
+                  className="gap-2 bg-amber-600 hover:bg-amber-700"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Rozpoczac sprawdzanie
+                </Button>
+              </div>
+            )}
+
             {/* Progress / running state */}
             {checkRunning && (
               <div className="space-y-3 py-4">
@@ -1847,41 +1861,45 @@ export default function Listings() {
               </div>
             )}
 
-            {/* Footer */}
-            <DialogFooter className="flex flex-wrap gap-2 justify-between items-center">
-              <div className="flex gap-2">
-                {selectedInactive.size > 0 && (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50"
-                      onClick={handleArchiveSelected}
-                    >
-                      <Archive className="w-3.5 h-3.5" />
-                      Archiwizuj zaznaczone ({selectedInactive.size})
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 text-red-600 border-red-300 hover:bg-red-50"
-                      onClick={handleDeleteSelected}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Usuń zaznaczone ({selectedInactive.size})
-                    </Button>
-                  </>
-                )}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => { setCheckDialogOpen(false); setCheckResults([]); }}
-                disabled={checkRunning}
-              >
-                Zamknij
-              </Button>
-            </DialogFooter>
+            {/* Footer - show when results available */}
+            {checkResults.length > 0 && (
+              <DialogFooter className="flex flex-wrap gap-2 justify-between items-center pt-4 border-t">
+                <div className="flex gap-2 flex-wrap">
+                  {selectedInactive.size > 0 ? (
+                    <>
+                      <Button
+                        size="sm"
+                        className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+                        onClick={handleArchiveSelected}
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                        Archiwizuj zaznaczone ({selectedInactive.size})
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="gap-1.5"
+                        onClick={handleDeleteSelected}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Usun zaznaczone ({selectedInactive.size})
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="text-xs text-slate-500">Zaznacz oferty aby je zarchiwizowac lub usunac</p>
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { setCheckDialogOpen(false); setCheckResults([]); }}
+                  disabled={checkRunning}
+                >
+                  Zamknij
+                </Button>
+              </DialogFooter>
+            )}
+
           </DialogContent>
         </Dialog>
 
