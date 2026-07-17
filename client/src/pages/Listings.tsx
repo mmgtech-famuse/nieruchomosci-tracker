@@ -15,12 +15,15 @@ import {
   AlertTriangle,
   Archive,
   ArrowUpDown,
+  Bell,
   ChevronDown,
   ChevronUp,
   ExternalLink,
   Flag,
   GitCompareArrows,
   HelpCircle,
+  History,
+  Keyboard,
   Loader2,
   MapPin,
   Plus,
@@ -32,7 +35,25 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { Listing, RatingStats } from "@shared/types";
+import type { Listing, ListingStatus, NoteEntry, RatingStats, TagInfo, CriterionInfo, CriterionScores, ActivityItem, NotificationItem, AreaInfo } from "@shared/types";
+import { getStatusMeta, LISTING_STATUSES, parseAreaPath } from "@shared/types";
+
+import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { useIsMobile } from "@/hooks/useMobile";
+import { useKeyboardShortcuts, useRowSwipe } from "@/hooks/useGestures";
+import { StatusDropdown } from "@/components/listing/StatusDropdown";
+import { UserBadge } from "@/components/listing/UserBadge";
+import { ThreadedNotesCell } from "@/components/listing/ThreadedNotes";
+import { ActivitySidebar } from "@/components/listing/ActivitySidebar";
+import { NotificationBell } from "@/components/listing/NotificationBell";
+import { TagPills, TagPill } from "@/components/listing/TagPills";
+import { MarketInsights } from "@/components/listing/MarketInsights";
+import { HomeBasePopover } from "@/components/listing/HomeBasePopover";
+import { ProsConsEditor, ProsConsList } from "@/components/listing/ProsCons";
+import { WeightedScoringSection } from "@/components/listing/WeightedScoring";
+import { MobileCompareCarousel } from "@/components/listing/MobileCompareCarousel";
+import { AreaControls } from "@/components/listing/AreaControls";
 
 // ─── Price helpers ──────────────────────────────────────────────────────────
 
@@ -315,10 +336,65 @@ export default function Listings() {
 
   // Help / tutorial dialog
   const [helpOpen, setHelpOpen] = useState(false);
+  // Activity & notifications
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [showGesturesHint, setShowGesturesHint] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !localStorage.getItem('nt_gestures_hint_shown');
+  });
+  
+  // Map areas & home base
+  const [homeBasePicking, setHomeBasePicking] = useState(false);
+  const [drawingAreaColor, setDrawingAreaColor] = useState<string | null>(null);
+  const [hiddenAreaIds, setHiddenAreaIds] = useState<Set<number>>(new Set());
+  const [showDistanceColumn, setShowDistanceColumn] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('nt_show_distance_col') !== 'false';
+  });
+  
+  // Clustering
+  const clusterRef = useRef<MarkerClusterer | null>(null);
+
 
   // Map expand toggle
   const [mapExpanded, setMapExpanded] = useState(false);
   const reextractMutation = trpc.listings.reextractUrl.useMutation();
+  // New queries for collaboration & insights
+  const { data: activityItems = [] } = trpc.activity.getRecent.useQuery();
+  const { data: notifications = [] } = trpc.notifications.getMine.useQuery();
+  const { data: unreadCount = 0 } = trpc.notifications.unreadCount.useQuery();
+  const { data: userSettings } = trpc.settings.get.useQuery();
+  const { data: allTags = [] } = trpc.tags.getAll.useQuery();
+  const { data: tagAssignments = {} } = trpc.tags.getAssignments.useQuery();
+  const { data: criteria = [] } = trpc.scoring.getCriteria.useQuery();
+  const { data: scores = {} } = trpc.scoring.getScores.useQuery();
+  const { data: areas = [] } = trpc.areas.getAll.useQuery();
+  
+  // New mutations
+  const updateStatusMutation = trpc.listings.updateStatus.useMutation();
+  const updateProsConsMutation = trpc.listings.updateProsCons.useMutation();
+  const setScoreMutation = trpc.scoring.setScore.useMutation();
+  const createTagMutation = trpc.tags.create.useMutation();
+  const updateTagMutation = trpc.tags.update.useMutation();
+  const deleteTagMutation = trpc.tags.delete.useMutation();
+  const assignTagMutation = trpc.tags.assign.useMutation();
+  const unassignTagMutation = trpc.tags.unassign.useMutation();
+  const createCriterionMutation = trpc.scoring.createCriterion.useMutation();
+  const updateCriterionMutation = trpc.scoring.updateCriterion.useMutation();
+  const deleteCriterionMutation = trpc.scoring.deleteCriterion.useMutation();
+  const createAreaMutation = trpc.areas.create.useMutation();
+  const updateAreaMutation = trpc.areas.update.useMutation();
+  const deleteAreaMutation = trpc.areas.delete.useMutation();
+  const setHomeBaseMutation = trpc.settings.setHomeBase.useMutation();
+  const clearHomeBaseMutation = trpc.settings.setHomeBase.useMutation();
+  const markNotificationReadMutation = trpc.notifications.markRead.useMutation();
+  const markAllNotificationsReadMutation = trpc.notifications.markRead.useMutation();
+  
+  // Auth & mobile
+  const { user } = useAuth();
+  const isMobile = useIsMobile();
+
   const [isGeocodingMissing, setIsGeocodingMissing] = useState(false);
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
   const [editingValue, setEditingValue] = useState("");
@@ -419,6 +495,147 @@ export default function Listings() {
     if (sortKey !== col) return <ArrowUpDown className="w-3 h-3 opacity-40" />;
     return sortDir === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />;
   }
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useKeyboardShortcuts({
+    f: () => {
+      if (selectedId) {
+        const listing = allListings.find(l => l.id === selectedId);
+        if (listing) {
+          const nextStatus = listing.status === "do_kontaktu" ? "nowy" : "do_kontaktu";
+          updateStatusMutation.mutate({ id: selectedId, status: nextStatus as ListingStatus }, {
+            onSuccess: () => { utils.listings.getAll.invalidate(); toast.success("Status zmieniony"); }
+          });
+        }
+      }
+    },
+    a: () => {
+      if (selectedId) {
+        archiveMutation.mutate({ id: selectedId }, {
+          onSuccess: () => { utils.listings.getAll.invalidate(); toast.success("Zarchiwizowano"); }
+        });
+      }
+    },
+    c: () => { setCompareOpen(v => !v); },
+    "?": () => { setHelpOpen(true); },
+  }, !isLoading);
+
+  // ── Handler: update status ─────────────────────────────────────────────────
+  const handleStatusChange = (id: number, status: ListingStatus) => {
+    updateStatusMutation.mutate({ id, status }, {
+      onSuccess: () => {
+        utils.listings.getAll.invalidate();
+        const meta = getStatusMeta(status); toast.success("Status zmieniony na " + meta.label);
+      },
+      onError: () => toast.error("Błąd przy zmianie statusu"),
+    });
+  };
+
+  // ── Handler: update pros/cons ──────────────────────────────────────────────
+  const handleUpdateProsCons = async (id: number, pros: string, cons: string) => {
+    return new Promise<void>((resolve, reject) => {
+      updateProsConsMutation.mutate({ id, pros, cons }, {
+        onSuccess: () => {
+          utils.listings.getAll.invalidate();
+          toast.success("Plusy i minusy zapisane");
+          resolve();
+        },
+        onError: () => {
+          toast.error("Błąd przy zapisie");
+          reject();
+        },
+      });
+    });
+  };
+
+  // ── Handler: set score ─────────────────────────────────────────────────────
+  const handleSetScore = (listingId: number, criterionId: number, score: number) => {
+    setScoreMutation.mutate({ listingId, criterionId, score }, {
+      onSuccess: () => {
+        utils.scoring.getScores.invalidate();
+      },
+      onError: () => toast.error("Błąd przy zapisie oceny"),
+    });
+  };
+
+  // ── Handler: tag operations ────────────────────────────────────────────────
+  const handleCreateTag = async (name: string, color: string) => {
+    return new Promise<TagInfo | undefined>((resolve) => {
+      createTagMutation.mutate({ name, color }, {
+        onSuccess: (tag) => {
+          utils.tags.getAll.invalidate();
+          resolve(tag);
+        },
+        onError: () => {
+          toast.error("Błąd przy tworzeniu etykiety");
+          resolve(undefined);
+        },
+      });
+    });
+  };
+
+  const handleAssignTag = (listingId: number, tagId: number) => {
+    assignTagMutation.mutate({ listingId, tagId }, {
+      onSuccess: () => {
+        utils.tags.getAssignments.invalidate();
+        toast.success("Etykieta przypisana");
+      },
+      onError: () => toast.error("Błąd przy przypisaniu etykiety"),
+    });
+  };
+
+  const handleUnassignTag = (listingId: number, tagId: number) => {
+    unassignTagMutation.mutate({ listingId, tagId }, {
+      onSuccess: () => {
+        utils.tags.getAssignments.invalidate();
+      },
+      onError: () => toast.error("Błąd przy usunięciu etykiety"),
+    });
+  };
+
+  // ── Handler: home base ─────────────────────────────────────────────────────
+  const handleSetHomeBase = async (label: string, address: string) => {
+    return new Promise<void>((resolve, reject) => {
+      setHomeBaseMutation.mutate({ label, lat: null, lng: null }, {
+        onSuccess: () => {
+          utils.settings.get.invalidate();
+          utils.listings.getAll.invalidate();
+          toast.success("Punkt odniesienia ustawiony");
+          resolve();
+        },
+        onError: () => {
+          toast.error("Błąd przy ustawianiu punktu");
+          reject();
+        },
+      });
+    });
+  };
+
+  // ── Handler: mark notifications ────────────────────────────────────────────
+  const handleMarkNotificationRead = (id: number) => {
+    markNotificationReadMutation.mutate({ ids: [id] }, {
+      onSuccess: () => utils.notifications.unreadCount.invalidate(),
+    });
+  };
+
+  const handleMarkAllNotificationsRead = () => {
+    markNotificationReadMutation.mutate({ ids: undefined }, {
+      onSuccess: () => utils.notifications.unreadCount.invalidate(),
+    });
+  };
+
+  // ── Handler: show gestures hint once ───────────────────────────────────────
+  useEffect(() => {
+    if (showGesturesHint && !isLoading && filtered.length > 0) {
+      setTimeout(() => {
+        toast.info("💡 Wskazówka: Przesuń rząd w prawo (status), w lewo (archiwum). Klawisz F = status, A = archiwum, C = porównanie, ? = pomoc", {
+          duration: 6000,
+        });
+        setShowGesturesHint(false);
+        localStorage.setItem('nt_gestures_hint_shown', 'true');
+      }, 1500);
+    }
+  }, [showGesturesHint, isLoading, filtered.length]);
 
   // ── Click-outside deselect ─────────────────────────────────────────────────
   useEffect(() => {

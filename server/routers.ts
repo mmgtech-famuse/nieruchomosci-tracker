@@ -205,7 +205,7 @@ export const appRouter = router({
         url: z.string().url("Podaj poprawny URL"),
         description: z.string().max(8000).optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { invokeLLM } = await import("./_core/llm");
         const { makeRequest } = await import("./_core/map");
         const { insertListing, getAllListings } = await import("./db");
@@ -377,6 +377,38 @@ export const appRouter = router({
           longitude: longitude ?? undefined,
         });
 
+        // ── Step 5b: Activity log + distance from home base (best-effort) ────
+        try {
+          const { logActivity, getSettingsForUser, updateListingDistance } = await import("./db");
+          logActivity({
+            listingId: newListing.id,
+            userId: ctx.user?.id ?? null,
+            userName: ctx.user?.name ?? null,
+            action: "added_listing",
+            detail: `Dodano ofertę #${newListing.id}: ${mie !== "-" ? mie : input.url.slice(0, 60)}`,
+          }).catch(() => {});
+
+          if (ctx.user && latitude && longitude) {
+            const settings = await getSettingsForUser(ctx.user.id);
+            if (settings?.homeBaseLat && settings?.homeBaseLng) {
+              const dm = await makeRequest<{
+                rows: Array<{ elements: Array<{ status: string; distance?: { value: number }; duration?: { value: number } }> }>;
+              }>("/maps/api/distancematrix/json", {
+                origins: `${settings.homeBaseLat},${settings.homeBaseLng}`,
+                destinations: `${latitude},${longitude}`,
+                mode: "driving",
+                language: "pl",
+              });
+              const el = dm?.rows?.[0]?.elements?.[0];
+              if (el?.status === "OK" && el.distance && el.duration) {
+                await updateListingDistance(newListing.id, Math.round(el.distance.value / 100) / 10, Math.round(el.duration.value / 60));
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[submitUrl] Post-insert extras failed:", err);
+        }
+
         // ── Step 6: Detect incomplete data ──────────────────────────────────
         const KEY_FIELDS = [woj, pow, gmi, mie, roz, cen];
         const emptyCount = KEY_FIELDS.filter(f => !f || f === "-").length;
@@ -407,9 +439,17 @@ export const appRouter = router({
         id: z.number().int().positive(),
         notes: z.string().max(2000),
       }))
-      .mutation(async ({ input }) => {
-        const { updateListingNotes } = await import("./db");
-        return updateListingNotes(input.id, input.notes);
+      .mutation(async ({ input, ctx }) => {
+        const { updateListingNotes, logActivity } = await import("./db");
+        const result = await updateListingNotes(input.id, input.notes);
+        logActivity({
+          listingId: input.id,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "note_updated",
+          detail: `Notatka w ofercie #${input.id}`,
+        }).catch(() => {});
+        return result;
       }),
 
     addRating: publicProcedure
@@ -417,10 +457,26 @@ export const appRouter = router({
         listingId: z.number().int().positive(),
         score: z.number().int().min(1).max(5),
       }))
-      .mutation(async ({ input }) => {
-        const { addRating } = await import("./db");
-        return addRating(input.listingId, input.score);
+      .mutation(async ({ input, ctx }) => {
+        const { addRating, addRatingWithUser, logActivity } = await import("./db");
+        const result = ctx.user
+          ? await addRatingWithUser(input.listingId, input.score, ctx.user.id, ctx.user.name ?? null)
+          : await addRating(input.listingId, input.score);
+        logActivity({
+          listingId: input.listingId,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "rated",
+          detail: `Ocena ${input.score}/5 dla oferty #${input.listingId}`,
+        }).catch(() => {});
+        return result;
       }),
+
+    /** Per-listing rater attribution (userName + score) for avatar display */
+    getRatingRaters: publicProcedure.query(async () => {
+      const { getRatingRaters } = await import("./db");
+      return getRatingRaters();
+    }),
 
     getRatingStats: publicProcedure.query(async () => {
       const { getRatingStats } = await import("./db");
@@ -609,23 +665,98 @@ ${pageContent.slice(0, 6000)}`;
         return { success: true, listing: updated[0] };
       }),
 
-    /** Toggle the "do kontaktu" flag on a listing */
+    /** Toggle the "do kontaktu" flag on a listing (kept for backward compat; syncs `status`) */
     toggleFlag: publicProcedure
       .input(z.object({
         id: z.number().int().positive(),
         flagged: z.boolean(),
       }))
-      .mutation(async ({ input }) => {
-        const { toggleFlag } = await import("./db");
-        return toggleFlag(input.id, input.flagged);
+      .mutation(async ({ input, ctx }) => {
+        const { toggleFlag, updateListingStatus, getListingById, logActivity } = await import("./db");
+        const result = await toggleFlag(input.id, input.flagged);
+        // Keep the status pipeline in sync with the legacy flag
+        try {
+          const listing = await getListingById(input.id);
+          if (input.flagged) {
+            await updateListingStatus(input.id, "do_kontaktu");
+          } else if (listing && listing.status === "do_kontaktu") {
+            await updateListingStatus(input.id, "nowy");
+          }
+        } catch { /* best-effort sync */ }
+        logActivity({
+          listingId: input.id,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "status_change",
+          detail: input.flagged ? `Oferta #${input.id} → Do kontaktu` : `Oferta #${input.id} → Nowy`,
+        }).catch(() => {});
+        return result;
+      }),
+
+    /** Update the status pipeline value (nowy | do_kontaktu | obejrzany | odrzucony | oferta_zlozona) */
+    updateStatus: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        status: z.enum(["nowy", "do_kontaktu", "obejrzany", "odrzucony", "oferta_zlozona"]),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { updateListingStatus, logActivity, notifyAllUsers } = await import("./db");
+        const { LISTING_STATUSES } = await import("@shared/types");
+        const result = await updateListingStatus(input.id, input.status);
+        const label = LISTING_STATUSES.find(s => s.key === input.status)?.label ?? input.status;
+        logActivity({
+          listingId: input.id,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "status_change",
+          detail: `Oferta #${input.id} → ${label}`,
+        }).catch(() => {});
+        // Notify family about meaningful pipeline moves (not every click)
+        if (input.status === "oferta_zlozona" || input.status === "obejrzany") {
+          notifyAllUsers({
+            listingId: input.id,
+            type: "status_change",
+            title: `Oferta #${input.id}: ${label}`,
+            body: ctx.user?.name ? `Zmienione przez: ${ctx.user.name}` : null,
+          }).catch(() => {});
+        }
+        return result;
+      }),
+
+    /** Update structured pros/cons lists */
+    updateProsCons: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        pros: z.string().max(2000).nullable(),
+        cons: z.string().max(2000).nullable(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { updateListingProsCons, logActivity } = await import("./db");
+        const result = await updateListingProsCons(input.id, input.pros, input.cons);
+        logActivity({
+          listingId: input.id,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "pros_cons_updated",
+          detail: `Plusy/minusy w ofercie #${input.id}`,
+        }).catch(() => {});
+        return result;
       }),
 
     /** Archive a listing (hide from map, move to archived section) */
     archiveListing: publicProcedure
       .input(z.object({ id: z.number().int().positive() }))
-      .mutation(async ({ input }) => {
-        const { archiveListing } = await import("./db");
-        return archiveListing(input.id);
+      .mutation(async ({ input, ctx }) => {
+        const { archiveListing, logActivity } = await import("./db");
+        const result = await archiveListing(input.id);
+        logActivity({
+          listingId: input.id,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "archived",
+          detail: `Zarchiwizowano ofertę #${input.id}`,
+        }).catch(() => {});
+        return result;
       }),
 
     /** Restore an archived listing */
@@ -646,8 +777,8 @@ ${pageContent.slice(0, 6000)}`;
       .input(z.object({
         ids: z.array(z.number().int().positive()).optional(), // if omitted, check all non-archived
       }))
-      .mutation(async ({ input }) => {
-        const { getAllListings } = await import("./db");
+      .mutation(async ({ input, ctx }) => {
+        const { getAllListings, recordPrice, updateListingPrice, notifyAllUsers, logActivity } = await import("./db");
         const { invokeLLM } = await import("./_core/llm");
 
         const all = await getAllListings();
@@ -655,9 +786,18 @@ ${pageContent.slice(0, 6000)}`;
           ? all.filter(l => input.ids!.includes(l.id) && !l.archived)
           : all.filter(l => !l.archived);
 
-        type CheckResult = { id: number; url: string; active: boolean; reason: string };
+        type CheckResult = { id: number; url: string; active: boolean; reason: string; priceChanged?: boolean; oldPrice?: string; newPrice?: string };
 
-        async function checkOne(listing: { id: number; url: string }): Promise<CheckResult> {
+        /** Parse Polish price string to number, e.g. "350 000 zł" → 350000 */
+        function parsePrice(raw: string | null | undefined): number | null {
+          if (!raw || raw === "-") return null;
+          const digits = raw.replace(/[^\d]/g, "");
+          if (!digits) return null;
+          const n = parseInt(digits, 10);
+          return isNaN(n) || n < 1000 ? null : n;
+        }
+
+        async function checkOne(listing: { id: number; url: string; cena: string }): Promise<CheckResult> {
           try {
             // Fetch the page
             const resp = await fetch(listing.url, {
@@ -683,7 +823,7 @@ ${pageContent.slice(0, 6000)}`;
               .trim()
               .slice(0, 4000);
 
-            // Ask AI to determine if the listing is still active
+            // Ask AI to determine if the listing is still active + extract current price
             const aiResp = await invokeLLM({
               messages: [
                 {
@@ -692,7 +832,7 @@ ${pageContent.slice(0, 6000)}`;
                 },
                 {
                   role: "user",
-                  content: `Sprawdź czy poniższe ogłoszenie nieruchomości jest nadal aktywne.\n\nURL: ${listing.url}\n\nTREŚĆ STRONY (fragment):\n${text}\n\nZwróć JSON: { "active": true/false, "reason": "krótkie wyjaśnienie po polsku" }\n\nOGŁOSZENIE JEST NIEAKTYWNE jeśli:\n- Strona zawiera komunikat o usunięciu/wygaśnięciu ogłoszenia (np. "To ogłoszenie jest nieaktywne", "Ogłoszenie wygasło", "Oferta niedostępna", "Nie znaleziono ogłoszenia")\n- Strona przekierowuje do strony głównej lub listy ogłoszeń bez treści\n- Brak jakichkolwiek danych o nieruchomości\n\nOGŁOSZENIE JEST AKTYWNE jeśli:\n- Zawiera opis nieruchomości, cenę, lokalizację\n- Nie ma komunikatów o wygaśnięciu`,
+                  content: `Sprawdź czy poniższe ogłoszenie nieruchomości jest nadal aktywne oraz odczytaj aktualną cenę.\n\nURL: ${listing.url}\n\nTREŚĆ STRONY (fragment):\n${text}\n\nZwróć JSON: { "active": true/false, "reason": "krótkie wyjaśnienie po polsku", "currentPrice": "aktualna cena w formacie 'XXX XXX zł' lub '-' jeśli nie można odczytać" }\n\nOGŁOSZENIE JEST NIEAKTYWNE jeśli:\n- Strona zawiera komunikat o usunięciu/wygaśnięciu ogłoszenia (np. "To ogłoszenie jest nieaktywne", "Ogłoszenie wygasło", "Oferta niedostępna", "Nie znaleziono ogłoszenia")\n- Strona przekierowuje do strony głównej lub listy ogłoszeń bez treści\n- Brak jakichkolwiek danych o nieruchomości\n\nOGŁOSZENIE JEST AKTYWNE jeśli:\n- Zawiera opis nieruchomości, cenę, lokalizację\n- Nie ma komunikatów o wygaśnięciu`,
                 },
               ],
               response_format: {
@@ -705,16 +845,65 @@ ${pageContent.slice(0, 6000)}`;
                     properties: {
                       active: { type: "boolean" },
                       reason: { type: "string" },
+                      currentPrice: { type: "string" },
                     },
-                    required: ["active", "reason"],
+                    required: ["active", "reason", "currentPrice"],
                     additionalProperties: false,
                   },
                 },
               },
             });
 
-            const result = JSON.parse(aiResp.choices[0].message.content as string) as { active: boolean; reason: string };
-            return { id: listing.id, url: listing.url, active: result.active, reason: result.reason };
+            const result = JSON.parse(aiResp.choices[0].message.content as string) as { active: boolean; reason: string; currentPrice?: string };
+
+            // ── Price change detection ──
+            let priceChanged = false;
+            let oldPrice: string | undefined;
+            let newPrice: string | undefined;
+            if (result.active && result.currentPrice && result.currentPrice !== "-") {
+              const oldNum = parsePrice(listing.cena);
+              const newNum = parsePrice(result.currentPrice);
+              if (oldNum !== null && newNum !== null && oldNum !== newNum) {
+                priceChanged = true;
+                oldPrice = listing.cena;
+                newPrice = normalizePrice(result.currentPrice);
+                try {
+                  await recordPrice(listing.id, oldPrice);
+                  await recordPrice(listing.id, newPrice);
+                  await updateListingPrice(listing.id, newPrice);
+                  const drop = newNum < oldNum;
+                  await notifyAllUsers({
+                    listingId: listing.id,
+                    type: drop ? "price_drop" : "price_increase",
+                    title: drop
+                      ? `Cena spadła: oferta #${listing.id}`
+                      : `Cena wzrosła: oferta #${listing.id}`,
+                    body: `${oldPrice} → ${newPrice}`,
+                  });
+                  await logActivity({
+                    listingId: listing.id,
+                    userId: null,
+                    userName: "System",
+                    action: "price_change",
+                    detail: `Oferta #${listing.id}: ${oldPrice} → ${newPrice}`,
+                  });
+                } catch (err) {
+                  console.warn(`[checkUrls] Price change persistence failed for #${listing.id}:`, err);
+                }
+              }
+            }
+
+            // ── Expired listing notification ──
+            if (!result.active) {
+              notifyAllUsers({
+                listingId: listing.id,
+                type: "listing_expired",
+                title: `Ogłoszenie wygasło: oferta #${listing.id}`,
+                body: result.reason?.slice(0, 500) ?? null,
+              }).catch(() => {});
+            }
+
+            return { id: listing.id, url: listing.url, active: result.active, reason: result.reason, priceChanged, oldPrice, newPrice };
           } catch (err) {
             console.warn(`[checkUrls] Error for ID ${listing.id}:`, err);
             return { id: listing.id, url: listing.url, active: true, reason: "Nie udało się sprawdzić (błąd sieci)" };
@@ -749,6 +938,351 @@ ${pageContent.slice(0, 6000)}`;
         await db.update(listings).set({ [input.field]: input.value }).where(eq(listings.id, input.id));
         return { success: true };
       }),
+  }),
+
+  // ── Threaded notes ────────────────────────────────────────────────────────────────
+  notes: router({
+    getAll: publicProcedure.query(async () => {
+      const { getNotesForListings } = await import("./db");
+      return getNotesForListings();
+    }),
+
+    add: publicProcedure
+      .input(z.object({
+        listingId: z.number().int().positive(),
+        parentId: z.number().int().positive().nullable().optional(),
+        content: z.string().min(1).max(2000),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { addNote, logActivity } = await import("./db");
+        const result = await addNote({
+          listingId: input.listingId,
+          parentId: input.parentId ?? null,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          content: input.content,
+        });
+        logActivity({
+          listingId: input.listingId,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: input.parentId ? "note_reply" : "note_added",
+          detail: `${input.parentId ? "Odpowiedź" : "Notatka"} w ofercie #${input.listingId}: ${input.content.slice(0, 80)}`,
+        }).catch(() => {});
+        return result;
+      }),
+
+    delete: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const { deleteNote } = await import("./db");
+        return deleteNote(input.id);
+      }),
+  }),
+
+  // ── Tags ──────────────────────────────────────────────────────────────────────────
+  tags: router({
+    getAll: publicProcedure.query(async () => {
+      const { getAllTags } = await import("./db");
+      return getAllTags();
+    }),
+
+    getAssignments: publicProcedure.query(async () => {
+      const { getListingTagMap } = await import("./db");
+      return getListingTagMap();
+    }),
+
+    create: publicProcedure
+      .input(z.object({
+        name: z.string().min(1).max(64),
+        color: z.string().max(24).default("blue"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { createTag, logActivity } = await import("./db");
+        const tag = await createTag(input.name, input.color);
+        logActivity({
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "tag_created",
+          detail: `Nowy tag: ${input.name}`,
+        }).catch(() => {});
+        return tag;
+      }),
+
+    update: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        name: z.string().min(1).max(64),
+        color: z.string().max(24),
+      }))
+      .mutation(async ({ input }) => {
+        const { updateTag } = await import("./db");
+        return updateTag(input.id, input.name, input.color);
+      }),
+
+    delete: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const { deleteTag } = await import("./db");
+        return deleteTag(input.id);
+      }),
+
+    assign: publicProcedure
+      .input(z.object({
+        listingId: z.number().int().positive(),
+        tagId: z.number().int().positive(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { assignTag, logActivity } = await import("./db");
+        const result = await assignTag(input.listingId, input.tagId);
+        logActivity({
+          listingId: input.listingId,
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "tagged",
+          detail: `Tag dodany do oferty #${input.listingId}`,
+        }).catch(() => {});
+        return result;
+      }),
+
+    unassign: publicProcedure
+      .input(z.object({
+        listingId: z.number().int().positive(),
+        tagId: z.number().int().positive(),
+      }))
+      .mutation(async ({ input }) => {
+        const { unassignTag } = await import("./db");
+        return unassignTag(input.listingId, input.tagId);
+      }),
+  }),
+
+  // ── Activity log ────────────────────────────────────────────────────────────────
+  activity: router({
+    getRecent: publicProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(200).default(100) }).optional())
+      .query(async ({ input }) => {
+        const { getActivityLog } = await import("./db");
+        return getActivityLog(input?.limit ?? 100);
+      }),
+  }),
+
+  // ── Notifications ──────────────────────────────────────────────────────────────
+  notifications: router({
+    getMine: publicProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) return [];
+      const { getNotificationsForUser } = await import("./db");
+      return getNotificationsForUser(ctx.user.id);
+    }),
+
+    unreadCount: publicProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) return 0;
+      const { getUnreadCount } = await import("./db");
+      return getUnreadCount(ctx.user.id);
+    }),
+
+    markRead: publicProcedure
+      .input(z.object({ ids: z.array(z.number().int().positive()).optional() }))
+      .mutation(async ({ input, ctx }) => {
+        if (!ctx.user) return { success: false };
+        const { markNotificationsRead } = await import("./db");
+        return markNotificationsRead(ctx.user.id, input.ids);
+      }),
+  }),
+
+  // ── Settings (home base + distance computation) ─────────────────────────
+  settings: router({
+    get: publicProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) return null;
+      const { getSettingsForUser } = await import("./db");
+      return (await getSettingsForUser(ctx.user.id)) ?? null;
+    }),
+
+    /** Save home base and recompute driving distances for all listings */
+    setHomeBase: publicProcedure
+      .input(z.object({
+        label: z.string().max(256),
+        lat: z.number().min(-90).max(90).nullable(),
+        lng: z.number().min(-180).max(180).nullable(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Zaloguj się, aby zapisać ustawienia" });
+        const { upsertSettings, getAllListings, updateListingDistance, logActivity } = await import("./db");
+        const { makeRequest } = await import("./_core/map");
+
+        // Geocode label if no explicit coordinates given
+        let lat = input.lat;
+        let lng = input.lng;
+        if ((lat === null || lng === null) && input.label.trim()) {
+          try {
+            const geo = await makeRequest<{ results: Array<{ geometry: { location: { lat: number; lng: number } } }> }>(
+              "/maps/api/geocode/json",
+              { address: `${input.label}, Polska`, language: "pl" }
+            );
+            const loc = geo?.results?.[0]?.geometry?.location;
+            if (loc) { lat = loc.lat; lng = loc.lng; }
+          } catch { /* geocode failed */ }
+        }
+
+        if (lat === null || lng === null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Nie udało się znaleźć lokalizacji. Podaj dokładniejszy adres." });
+        }
+
+        await upsertSettings(ctx.user.id, {
+          homeBaseLabel: input.label,
+          homeBaseLat: String(lat),
+          homeBaseLng: String(lng),
+        });
+
+        // Recompute driving distances for all listings with coordinates (batches of 25)
+        const all = await getAllListings();
+        const withCoords = all.filter(l => l.latitude && l.longitude);
+        let computed = 0;
+        const BATCH = 25;
+        for (let i = 0; i < withCoords.length; i += BATCH) {
+          const batch = withCoords.slice(i, i + BATCH);
+          try {
+            const destinations = batch.map(l => `${l.latitude},${l.longitude}`).join("|");
+            const dm = await makeRequest<{
+              rows: Array<{ elements: Array<{ status: string; distance?: { value: number }; duration?: { value: number } }> }>;
+            }>("/maps/api/distancematrix/json", {
+              origins: `${lat},${lng}`,
+              destinations,
+              mode: "driving",
+              language: "pl",
+            });
+            const elements = dm?.rows?.[0]?.elements ?? [];
+            for (let j = 0; j < batch.length; j++) {
+              const el = elements[j];
+              if (el?.status === "OK" && el.distance && el.duration) {
+                await updateListingDistance(batch[j].id, Math.round(el.distance.value / 100) / 10, Math.round(el.duration.value / 60));
+                computed++;
+              }
+            }
+          } catch (err) {
+            console.warn("[setHomeBase] Distance matrix batch failed:", err);
+          }
+        }
+
+        logActivity({
+          userId: ctx.user.id,
+          userName: ctx.user.name ?? null,
+          action: "home_base_set",
+          detail: `Punkt odniesienia: ${input.label} (${computed} dystansów)`,
+        }).catch(() => {});
+
+        return { success: true, lat, lng, computed, total: withCoords.length };
+      }),
+  }),
+
+  // ── Weighted scoring ──────────────────────────────────────────────────────────
+  scoring: router({
+    getCriteria: publicProcedure.query(async () => {
+      const { getCriteria } = await import("./db");
+      return getCriteria();
+    }),
+
+    createCriterion: publicProcedure
+      .input(z.object({
+        name: z.string().min(1).max(64),
+        weight: z.number().int().min(1).max(10).default(5),
+      }))
+      .mutation(async ({ input }) => {
+        const { createCriterion } = await import("./db");
+        return createCriterion(input.name, input.weight);
+      }),
+
+    updateCriterion: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        name: z.string().min(1).max(64).optional(),
+        weight: z.number().int().min(1).max(10).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { updateCriterion } = await import("./db");
+        return updateCriterion(input.id, { name: input.name, weight: input.weight });
+      }),
+
+    deleteCriterion: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const { deleteCriterion } = await import("./db");
+        return deleteCriterion(input.id);
+      }),
+
+    getScores: publicProcedure.query(async () => {
+      const { getAllCriterionRatings } = await import("./db");
+      const rows = await getAllCriterionRatings();
+      // listingId → { criterionId → score }
+      const map: Record<number, Record<number, number>> = {};
+      for (const r of rows) {
+        if (!map[r.listingId]) map[r.listingId] = {};
+        map[r.listingId][r.criterionId] = r.score;
+      }
+      return map;
+    }),
+
+    setScore: publicProcedure
+      .input(z.object({
+        listingId: z.number().int().positive(),
+        criterionId: z.number().int().positive(),
+        score: z.number().int().min(1).max(5),
+      }))
+      .mutation(async ({ input }) => {
+        const { setCriterionScore } = await import("./db");
+        return setCriterionScore(input.listingId, input.criterionId, input.score);
+      }),
+  }),
+
+  // ── Areas of interest (map polygons) ─────────────────────────────────────
+  areas: router({
+    getAll: publicProcedure.query(async () => {
+      const { getAreas } = await import("./db");
+      return getAreas();
+    }),
+
+    create: publicProcedure
+      .input(z.object({
+        name: z.string().min(1).max(128).default("Obszar"),
+        color: z.string().max(24).default("blue"),
+        path: z.string().min(2).max(60000), // JSON [{lat,lng},...]
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { createArea, logActivity } = await import("./db");
+        const area = await createArea(input.name, input.color, input.path);
+        logActivity({
+          userId: ctx.user?.id ?? null,
+          userName: ctx.user?.name ?? null,
+          action: "area_created",
+          detail: `Nowy obszar na mapie: ${input.name}`,
+        }).catch(() => {});
+        return area;
+      }),
+
+    update: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        name: z.string().min(1).max(128).optional(),
+        color: z.string().max(24).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { updateArea } = await import("./db");
+        return updateArea(input.id, { name: input.name, color: input.color });
+      }),
+
+    delete: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const { deleteArea } = await import("./db");
+        return deleteArea(input.id);
+      }),
+  }),
+
+  // ── Insights (price history) ─────────────────────────────────────────────
+  insights: router({
+    getPriceHistory: publicProcedure.query(async () => {
+      const { getPriceHistory } = await import("./db");
+      return getPriceHistory();
+    }),
   }),
 });
 
